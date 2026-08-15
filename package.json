@@ -1,0 +1,14 @@
+{
+  "name": "popos-last-survivor",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "POPO'S LAST SURVIVOR — 8-player battle royale (static page + authoritative game server)",
+  "main": "server.mjs",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
