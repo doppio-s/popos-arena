@@ -7218,7 +7218,8 @@ class Fighter {
     }
     const ghostWall = (this.diveT > 0 || inZipper(this));
     const stepD = Math.hypot(stepDx, stepDz);
-    const nSub = stepD > 0.3 ? Math.min(16, Math.ceil(stepD / 0.3)) : 1;
+    const nSubDt = Math.min(8, Math.max(1, Math.round(dt / (1 / 60))));
+    const nSub = Math.max(stepD > 0.3 ? Math.min(16, Math.ceil(stepD / 0.3)) : 1, nSubDt);
     for (let k = 0; k < nSub; k++) {
       this.pos.x += stepDx / nSub;
       this.pos.z += stepDz / nSub;
@@ -13945,7 +13946,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v177';
+const GAME_VERSION = 'v178';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
