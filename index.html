@@ -13043,14 +13043,16 @@ function netApplySnapshots(dt) {
     x.hp = rb[5]; x.shield = rb[6]; x.level = rb[7];
     const fl = rb[8];
     x.alive = !!(fl & NET_F_ALIVE);
-    x.standOn = !!(fl & NET_F_STAND);
-    x.crouch = !!(fl & NET_F_CROUCH);
-    x.grounded = !!(fl & NET_F_GROUND);
+    if (i !== net.slot) {
+      x.standOn = !!(fl & NET_F_STAND);
+      x.crouch = !!(fl & NET_F_CROUCH);
+      x.grounded = !!(fl & NET_F_GROUND);
+    }
     const gx = ra[1] + (rb[1] - ra[1]) * u;
     const gy = ra[2] + (rb[2] - ra[2]) * u;
     const gz = ra[3] + (rb[3] - ra[3]) * u;
     if (i === net.slot) {
-      const lagMs = (net.ping || 0) / 2;
+      const lagMs = (net.ping || 0);
       const ht = target - lagMs;
       const hist = net._hist || (net._hist = []);
       let hp = null;
@@ -13071,7 +13073,8 @@ function netApplySnapshots(dt) {
           x.pos.x += ex * k;
           x.pos.z += ez * k;
         }
-        if (dy > NET_ERR_DEAD_Y) x.y += ey * NET_PULL_Y;
+        const airborne = !x.grounded || Math.abs(x.vy || 0) > 0.5;
+        if (!airborne && dy > NET_ERR_DEAD_Y) x.y += ey * NET_PULL_Y;
       }
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
@@ -13971,7 +13974,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v179';
+const GAME_VERSION = 'v180';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
