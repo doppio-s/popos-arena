@@ -144,8 +144,8 @@
   #netBadge { position: absolute; left: 10px; top: 40px; font-size: 11px; letter-spacing: .1em;
     color: #7fd8ff; background: rgba(8,14,34,.72); border: 1px solid #2c3a6a; border-radius: 6px;
     padding: 3px 8px; pointer-events: none; z-index: 25; }
-  #blackBox { position: absolute; right: 8px; top: 96px; max-width: 46vw; max-height: 58vh;
-    overflow: auto; font-size: 10px; line-height: 1.35;
+  #blackBox { position: absolute; left: 10px; top: 288px; max-width: 62vw; max-height: 46vh;
+    overflow: auto; font-size: 11px; line-height: 1.4;
     font-family: ui-monospace, Menlo, Consolas, monospace;
     color: #ffe08a; background: rgba(10,6,2,.86); border: 1px solid #7a5a20; border-radius: 8px;
     padding: 6px 8px; z-index: 60; white-space: pre-wrap; cursor: pointer; }
@@ -4248,6 +4248,7 @@ function updateUnstick(f, dt) {
   if (ok && f.isPlayer) announce('引っかかりから抜け出した');
   return ok;
 }
+const BB_MOVE = 0.6;      
 const BB_HOLD = 1.5;        
 const BB_KEEP = 6;          
 const bb = { t: 0, stuckT: 0, armed: true, rows: [], sentPrev: 0, rateT: 0, rate: 0, hidden: false };
@@ -4301,7 +4302,7 @@ function bbRecord(f, dt) {
   bb.rows.unshift({
     t: bb.t,
     pos: `(${f.pos.x.toFixed(1)}, ${f.pos.z.toFixed(1)}) 高さ${f.y.toFixed(2)}`,
-    ask: `${Math.hypot(f.moveDir.x, f.moveDir.z).toFixed(2)}`,
+    ask: `指${(world._bbInput || 0).toFixed(2)} 向き${Math.hypot(f.moveDir.x, f.moveDir.z).toFixed(2)}`,
     spd: `${(f._bbSpd || 0).toFixed(1)}m/s 歩幅${(f._bbStep || 0).toFixed(3)}`,
     st: st.length ? st.join(' ') : 'なし',
     net: net.on
@@ -4310,6 +4311,7 @@ function bbRecord(f, dt) {
     box: blockers.length ? blockers : ['まわりに箱なし'],
   });
   if (bb.rows.length > BB_KEEP) bb.rows.length = BB_KEEP;
+  if (bb.rows.length === 1) announce('引っかかりを記録した(画面の左)');
   bbRender();
 }
 function bbRender() {
@@ -4329,13 +4331,12 @@ function bbUpdate(f, dt) {
   bb.t += dt;
   bb.rateT += dt;
   if (bb.rateT >= 1) { bb.rate = (net.sentN | 0) - bb.sentPrev; bb.sentPrev = net.sentN | 0; bb.rateT = 0; }
-  const asking = Math.hypot(f.moveDir.x, f.moveDir.z) > 0.05;
+  const asking = (world._bbInput || 0) > 0.05;
   if (!f.alive || world.spectating || !asking) { bb.stuckT = 0; bb.armed = true; return; }
-  const want = (f._bbSpd || 0) * dt;
   const got = Math.hypot(f.pos.x - (bb.px === undefined ? f.pos.x : bb.px),
     f.pos.z - (bb.pz === undefined ? f.pos.z : bb.pz));
   bb.px = f.pos.x; bb.pz = f.pos.z;
-  if (want > 1e-4 && got < want * 0.17) bb.stuckT += dt;
+  if (got < BB_MOVE * dt) bb.stuckT += dt;
   else { bb.stuckT = 0; bb.armed = true; }
   if (bb.stuckT >= BB_HOLD && bb.armed) { bb.armed = false; bbRecord(f, dt); }
 }
@@ -12420,6 +12421,7 @@ function updatePlayer(dt) {
   if (held.left) ix -= 1;
   if (held.right) ix += 1;
   if (world.stick.active) { ix = world.stick.x; iy = world.stick.y; }
+  world._bbInput = Math.min(1, Math.hypot(ix, iy));
   const crouchPressed = !!(world.wantCrouch || held.crouch);
   if (crouchPressed && !world._crouchPrev) world.crouchLatch = !world.crouchLatch;
   world._crouchPrev = crouchPressed;
@@ -14417,7 +14419,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v190';
+const GAME_VERSION = 'v191';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
