@@ -81,8 +81,26 @@ const IP_LIMIT = Number(process.env.IP_LIMIT || 8);    // 同じIPからの同�
 const CONN_LIMIT = Number(process.env.CONNS || 400);   // 全体の同時接続
 const NAME_MAX = 12;
 const FILL_WAIT_S = 15;        // これだけ待っても埋まらなければCPUで埋めて開始
-const TICK_HZ = 60;            // 計算の刻み
 const SNAP_HZ = 20;            // 写しを配る回数(v113)
+/* ★★★v173 #384: 計算の刻みを 60 → 20 に落とした(環境変数 TICK で変えられる)。
+   ★実測(本番 Render 無料枠 = 0.1 CPU、僕1人だけ接続):
+       設計 20回/秒 の写しが 15.7回/秒 しか届かない
+       = 1歩に 64ms かかっている(設計は16.7ms)= 【4倍粗い】
+   ★そして下の時計には「重い時は dt を 0.05 で丸める」保護が入っている。
+     64ms かかっているのに 0.05秒 しか進めない → ゲーム内時間が実時間の78%。
+     この【スローモーション】が、カクつき・攻撃が通らない の正体だった。
+   ★TICK_HZ=20 なら1歩がちょうど 0.05秒 = 丸めが発動しない
+     → 時間が実時間どおりに進む。しかも計算量は3分の1。
+   ★写しは元々 20回/秒 なので、手元に届く情報量は【変わらない】。
+     オンライン対戦でサーバー20〜30Hzは普通の設計。
+   ★横移動の当たり判定は元からサブステップ化されている(nSub: 0.3mごと最大16分割)
+     ので、刻みを粗くしても壁を抜けるようにはならない。 */
+const TICK_HZ = Number(process.env.TICK || 20);
+/* ★★★v173 #384: 刺客の数。オンラインだけ減らす(利用者「オンライン時のみにしてね」)。
+   ★index.html 側は globalThis.__MOB_N が入っている時だけこれに従う =
+     手元のブラウザは 10 のまま。★世界を読み込む【前】に入れる必要がある。 */
+const MOB_ONLINE = Number(process.env.MOBS || 4);
+globalThis.__MOB_N = MOB_ONLINE;
 const PING_HZ = 2;             // ★v117 #280: 往復の時間を測る回数(毎秒2回)
 /* ★★★v117 #280: 遅れ(lag)は【サーバーが測る】。クライアントに申告させない ——
    させると「私は0.5秒遅れています」と言うだけで半秒前の世界を撃てる人が出る。
@@ -364,7 +382,7 @@ attachWs(server, {
 });
 
 server.listen(PORT, () => {
-  console.log(`GHOST SURVIVOR サーバー起動 — http://localhost:${PORT}/`);
+  console.log(`POPO'S LAST SURVIVOR サーバー起動 — http://localhost:${PORT}/`);
   console.log(`  1部屋 ${ROOM_MAX}人 / ${FILL_WAIT_S}秒で埋まらなければCPUが埋める`);
   console.log(`  同時に立てられる部屋: ${ROOM_LIMIT}(環境変数 ROOMS で変えられる)`);
   console.log('  同じWi-Fiの人は  http://<このPCのIP>:' + PORT + '/  を開く');

@@ -422,7 +422,11 @@ import * as THREE from 'three';
 import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js';
 const WORLD_R = 108;                
 const TOTAL_FIGHTERS = 8;           
-const MOB_N = 10;                   
+const MOB_N = (typeof globalThis.__MOB_N === 'number'
+  && Number.isFinite(globalThis.__MOB_N)
+  && globalThis.__MOB_N >= 0)
+  ? Math.min(10, Math.floor(globalThis.__MOB_N))
+  : 10;                             
 const MOB_HP = 500;
 const LV_MAX = 6;
 const LV_THRESH = [100, 210, 390, 630, 930, 1290];
@@ -13857,7 +13861,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v172';
+const GAME_VERSION = 'v173';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
