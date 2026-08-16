@@ -225,17 +225,78 @@ async function makeRoom(members) {
      【席の受け渡しは元から出来ていた】。入口側でそれを使っていなかっただけ。
    ★だから部屋を増やさずに解決する = CPUの負担は1ミリも増えない。
    ★生きている席にだけ座らせる。死体に座らせると、入った瞬間に観戦になる。 */
+
+/* ★★★v188 #413: 【途中参加した人を、公平な状態で座らせる】。
+   利用者「スポーン地点からスキルとか使ってもほぼ動けない」——
+   本物のサーバーにつないでテストプレイして、これが再現した。
+
+   ★何が起きていたか:
+     ROOMS=1 なので、部屋が1つ走っていると次の人は必ず途中参加(v182 #404)になる。
+     その席を動かしていたのはCPUで、【体力が残り少ない】ことも
+     【安置(エリア)の外に立っている】こともある。
+     座った瞬間にCPUの思考は止まる(netInput が付くと updateAI が黙る)ので、
+     人が操作を始める前の1〜2秒、その体は【棒立ちのまま】エリアの外で焼かれる。
+     実測: 途中参加して1.5秒後には hp=0。8方向どこへ歩いても 0.00m ——
+     利用者の言う「湧いた所からスキルを使っても動けない」そのもの。
+   ★しかも【死んだ瞬間を手元が見ていない】ので、死亡画面も出ない。
+     本人には「理由もなく動けない」としか映らない。
+
+   ★直し: 席を引き継ぐ時は、体力・精神力を満タンに戻し、
+     【今の安置の内側】の空いている所へ置き直す。少しの無敵も付ける
+     (置き直した直後に流れ弾で消えないだけの猶予)。
+   ★レベルとチップは引き継ぐ —— 途中から入って裸一貫では、もう追いつけない。 */
+const TAKEOVER_INVUL = 2.0;         // 座った直後の無敵(秒)
+function takeoverSpot(mod, f) {
+  const z = mod.world.zone;
+  const R = Math.max(6, (z.r || 60) * 0.7);
+  for (let t = 0; t < 300; t++) {
+    const a = Math.random() * Math.PI * 2;
+    const r = Math.sqrt(Math.random()) * R;
+    const x = (z.cx || 0) + Math.cos(a) * r, zz = (z.cz || 0) + Math.sin(a) * r;
+    if (Math.hypot(x, zz) > mod.WORLD_R - 6) continue;
+    const gy = mod.groundHeightAt(x, zz, 0.5, 0.45);
+    if (gy > 0.6) continue;                       // 地上だけ(屋上に湧かせない)
+    if (!mod.spotFree(x, zz, gy, 0.7)) continue;  // 立てない所は選ばない
+    let near = false;
+    for (const o of mod.world.fighters) {
+      if (o === f || !o.alive) continue;
+      if (Math.hypot(o.pos.x - x, o.pos.z - zz) < 12) { near = true; break; }
+    }
+    if (near) continue;                           // 敵の真隣に湧かせない
+    return { x, z: zz, y: gy };
+  }
+  return null;
+}
+function prepareTakeover(room, f) {
+  const mod = room.mod;
+  f.alive = true;
+  f.hp = f.maxHp;
+  f.sp = f.maxSp;
+  f.spExhaust = 0;
+  f.stunT = 0; f.slowT = 0;
+  f.invulnT = Math.max(f.invulnT || 0, TAKEOVER_INVUL);
+  if (f.knock) f.knock.set(0, 0, 0);
+  try {
+    const s = takeoverSpot(mod, f);
+    if (s) { f.pos.x = s.x; f.pos.z = s.z; f.y = s.y; f.vy = 0; f.grounded = true; }
+  } catch (e) { /* 置き直せなくても、体力が戻っているだけで詰みは消える */ }
+  return f;
+}
+
 function seatInto(room, seat, c) {
   const f = room.mod.world.fighters[seat];
   if (!f) return false;
+  prepareTakeover(room, f);          // ★v188 #413: 公平な状態にしてから渡す
   room.members[seat] = c;
   c.room = room; c.slot = seat; c.fighter = f;
   f.netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false, crouch: false,
     jump: false, skill: false, ult: false,
-    dash: false, vault: false, climb: false, skillHeld: false };
+    dash: false, vault: false, climb: false, skillHeld: false,
+    ax: NaN, ay: NaN, az: NaN };     // ★v185 #407: createRoom と同じ形にそろえる
   c.sock.send(JSON.stringify({ t: 'start', room: room.id, seed: room.seed,
     map: room.map, slot: seat, roster: room.roster }));
-  console.log(`[部屋] ${room.id} に途中参加 — 席${seat + 1} (${c.name})`);
+  console.log(`[部屋] ${room.id} に途中参加 — 席${seat + 1} (${c.name})`
+    + ` → (${f.pos.x.toFixed(0)}, ${f.pos.z.toFixed(0)}) 体力満タン`);
   return true;
 }
 function findOpenSeat() {
@@ -245,7 +306,13 @@ function findOpenSeat() {
       const m = room.members[i];
       if (m && m.sock.open) continue;              // 人が座っている
       const f = room.mod.world.fighters[i];
-      if (!f || !f.alive) continue;                // 倒れている席には座らせない
+      if (!f) continue;
+      /* ★v188 #413: 倒れている席も使えるようにした。
+         ★v182 は「死体に座らせると入った瞬間に観戦になる」ので避けていたが、
+           それは【座らせ方】の問題だった —— prepareTakeover が体力を戻して
+           安置の内側へ置き直すので、倒れている席でも公平に始められる。
+         ★ROOMS=1 では席が8つしかない。生きている席だけに絞ると、
+           終盤は「満員」と言われて友達が一切入れない。 */
       return { room, seat: i };
     }
   }
