@@ -12896,6 +12896,8 @@ const NET_SNAP_DIST = 3.0;
 const NET_PULL = 0.18;         
 const NET_PULL_Y = 0.30;
 const NET_SNAP_DIST_Y = 1.4;
+const NET_ERR_DEAD = 0.35;
+const NET_ERR_DEAD_Y = 0.30;
 const net = {
   on: false, ws: null, slot: -1, roster: null, seed: 0, map: '', room: '',
   a: null, b: null, aT: 0, bT: 0,      
@@ -12972,6 +12974,7 @@ function netStart(m) {
   net.on = true; net.waiting = false;
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
+  net._hist = [];   
   $('netScreen').classList.add('hidden');
   $('titleScreen').classList.add('hidden');
   unmountAd('title');   
@@ -13047,14 +13050,28 @@ function netApplySnapshots(dt) {
     const gy = ra[2] + (rb[2] - ra[2]) * u;
     const gz = ra[3] + (rb[3] - ra[3]) * u;
     if (i === net.slot) {
-      const d = Math.hypot(x.pos.x - gx, x.pos.z - gz);
-      const dy = Math.abs(x.y - gy);
+      const lagMs = (net.ping || 0) / 2;
+      const ht = target - lagMs;
+      const hist = net._hist || (net._hist = []);
+      let hp = null;
+      for (let hI = hist.length - 1; hI >= 0; hI--) { if (hist[hI].t <= ht) { hp = hist[hI]; break; } }
+      if (!hp && hist.length) hp = hist[0];
+      const refX = hp ? hp.x : x.pos.x;
+      const refY = hp ? hp.y : x.y;
+      const refZ = hp ? hp.z : x.pos.z;
+      const ex = gx - refX, ey = gy - refY, ez = gz - refZ;
+      const d = Math.hypot(ex, ez);
+      const dy = Math.abs(ey);
       if (d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) {
         x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
+        hist.length = 0;
       } else {
-        x.pos.x += (gx - x.pos.x) * NET_PULL;
-        x.pos.z += (gz - x.pos.z) * NET_PULL;
-        x.y += (gy - x.y) * NET_PULL_Y;
+        if (d > NET_ERR_DEAD) {
+          const k = ((d - NET_ERR_DEAD) / d) * NET_PULL;
+          x.pos.x += ex * k;
+          x.pos.z += ez * k;
+        }
+        if (dy > NET_ERR_DEAD_Y) x.y += ey * NET_PULL_Y;
       }
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
@@ -13076,6 +13093,14 @@ function netApplySnapshots(dt) {
     n++;
   }
   if (B.z) { world.zone.cx = B.z[0]; world.zone.cz = B.z[1]; world.zone.r = B.z[2]; }
+  {
+    const me2 = world.fighters[net.slot];
+    if (me2) {
+      const hist = net._hist || (net._hist = []);
+      hist.push({ t: nowMs, x: me2.pos.x, y: me2.y, z: me2.pos.z });
+      while (hist.length && hist[0].t < nowMs - 1500) hist.shift();
+    }
+  }
   world.matchT = B.mt;
   netCheckOutcome();
   return n;
@@ -13946,7 +13971,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v178';
+const GAME_VERSION = 'v179';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
