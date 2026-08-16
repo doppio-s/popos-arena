@@ -4320,7 +4320,7 @@ function bbRender() {
   if (!bb.rows.length || bb.hidden) { e.classList.add('hidden'); return; }
   let h = `<div class="hd">引っかかり記録 ${bb.rows.length}件 (押すと閉じる)</div>`;
   for (const r of bb.rows) {
-    h += `\n${r.t.toFixed(0)}秒 ${r.pos}\n  入力${r.ask} 出た速さ${r.spd}\n  状態 ${r.st}\n  ${r.net}\n`;
+    h += `\n${r.t.toFixed(0)}秒 ${r.pos}\n  ${r.ask} 出た速さ${r.spd}\n  状態 ${r.st}\n  ${r.net}\n`;
     for (const b of r.box) h += `  ${b}\n`;
   }
   e.innerHTML = h;
@@ -14419,7 +14419,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v191';
+const GAME_VERSION = 'v192';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
