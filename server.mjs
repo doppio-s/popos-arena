@@ -204,7 +204,8 @@ async function makeRoom(members) {
     m.room = room; m.slot = i;
     const f = mod.world.fighters[i];
     f.netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false, crouch: false,
-      jump: false, skill: false, ult: false };
+      jump: false, skill: false, ult: false,
+      dash: false, vault: false, climb: false, skillHeld: false };   // ★v181 #394/#398
     m.fighter = f;
     m.sock.send(JSON.stringify({ t: 'start', room: id, seed, map, slot: i, roster }));
   });
@@ -258,7 +259,14 @@ setInterval(() => {
     if (room.orbAcc >= 1 / ORB_HZ) {
       room.orbAcc = 0;
       try {
-        const om = JSON.stringify({ t: 'orbs', o: room.mod.snapshotOrbs() });
+        /* ★★v181 #396: 同じ便に【割れた窓の番号一覧】も乗せる。
+           ★別便を増やさないのは、どちらも「ほとんど変わらない物」だから ——
+             電文の種類が増えるほど、受け側で1つ落とした時の食い違いも増える。 */
+        const om = JSON.stringify({ t: 'orbs', o: room.mod.snapshotOrbs(),
+          gl: room.mod.snapshotGlass ? room.mod.snapshotGlass() : [],
+          /* ★v181 #402: チップの枚数(競技者8席ぶん)。これが無いと
+             手元の表示が「チップ -530 / 300」のような負の数になる。 */
+          en: room.mod.snapshotEnergy ? room.mod.snapshotEnergy() : [] });
         for (const m of room.members) if (m && m.sock.open) m.sock.send(om);
       } catch (e) { /* 世界が入れ替わる瞬間などは黙って見送る */ }
     }
@@ -387,6 +395,18 @@ attachWs(server, {
       if (m.jump) n.jump = true;
       if (m.skill) n.skill = true;
       if (m.ult) n.ult = true;
+      /* ★★★v181 #394: ダッシュ・窓抜け・壁登り。
+         ★v114〜v180 の電文にはこの3つが無かった —— つまりオンラインでは
+           【誰ひとりダッシュできず、窓も抜けられず、壁も登れなかった】。
+         ★窓抜けが届かないと、割れた窓が手元だけで割れてサーバー側の箱が残る
+           = 利用者の言う「殴っても当たらないけど進めない壁」。 */
+      if (m.dash) n.dash = true;
+      if (m.vault) n.vault = true;
+      n.climb = !!m.climb;        // ★壁登りだけは押しっぱなし(離した瞬間に手が離れる)
+      /* ★★★v181 #398: 技ボタンを"押している間"。これが無いと、ネット越しの人は
+         タケルのブロッキング/カゲミツの時飛ばし/レンジの設置狙いを
+         【一度始めたら二度と解けない】(精神力が尽きるまで吸われ続ける)。 */
+      n.skillHeld = !!m.sk;
     } else if (m.t === 'pog') {
       /* ★v117 #280: 返事が返ってきた。★自分が送った番号(k)の返事だけを見る ——
          見ないと、古い返事や作った返事で遅れをいくらでも盛れる。 */

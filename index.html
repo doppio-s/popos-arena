@@ -745,6 +745,7 @@ const GRUSH_CLIMB_NEAR = 2.0;
 const GRUSH_CLIMB_FAN = Math.PI / 3;   
 const GRUSH_CLIMB_KICK = 0.45;    
 const GRUSH_CLIMB_MAX = 14;       
+const GRUSH_CLIMB_TOP = 2.0;
 const GRUSH_ULT_AIM_T = 12;       
 const GRUSH_ULT_AIM_R = 42;       
 const GRUSH_ULT_AIM_SPD = 15;     
@@ -1389,6 +1390,12 @@ function fighterAimRay(f, r) {
   const la = world.lookAtV;
   if (la) { r.ox = la.x; r.oy = la.y; r.oz = la.z; }
   return r;
+}
+function aimDirOf(f) {
+  if (f && f.isPlayer) return cameraAimDir();
+  const dy = (f && f.netInput) ? (f.netInput.dy || 0) : 0;
+  const l = Math.hypot(1, dy) || 1;
+  return { x: Math.sin(f.facing) / l, y: dy / l, z: Math.cos(f.facing) / l };
 }
 const camera = new THREE.PerspectiveCamera(CAM_FOV, innerWidth / innerHeight, 0.1, 340);
 camera.position.set(0, 9, 12);
@@ -6255,10 +6262,15 @@ class Fighter {
       const muzY = this.astral ? this.astralPos.y : this.y + 1.3;
       const muzZ = this.astral ? this.astralPos.z : this.pos.z;
       let dir;
-      if (this.isPlayer) {
-        dir = cameraAimDir();
-        if (!this.astral) this.facing = Math.atan2(dir.x, dir.z);
-        else this.astralFacing = Math.atan2(dir.x, dir.z);
+      if (this.isPlayer || this.netInput) {
+        {
+          const a0 = aimDirOf(this);
+          dir = new THREE.Vector3(a0.x, a0.y, a0.z);
+        }
+        if (this.isPlayer) {
+          if (!this.astral) this.facing = Math.atan2(dir.x, dir.z);
+          else this.astralFacing = Math.atan2(dir.x, dir.z);
+        }
         const r = fighterAimRay(this, _aimRayA);
         let s = aimRayTravel(r.ox - this.pos.x, r.oz - this.pos.z, r.ux, r.uz, this.effRange());
         shotAimPoint(this, r, s, muzX, muzY, muzZ, _shotAim);
@@ -6793,8 +6805,7 @@ class Fighter {
       restoreGlassNear(this.pos, 9);
       sfx.heal();
     } else if (id === 'ryuji') {
-      const dir = this.isPlayer ? cameraAimDir()
-        : { x: Math.sin(this.facing), y: 0, z: Math.cos(this.facing) };
+      const dir = aimDirOf(this);   
       pierceStrike(this, targets, dir);
       this.skillCd = this.isPlayer ? 0 : this.def.skillCd;
     }
@@ -6936,7 +6947,7 @@ class Fighter {
     return true;
   }
   tryDash() {
-    if (!this.isPlayer) return false;
+    if (!this.isPlayer && !this.netInput) return false;
     if (this.astral) return false;   
     if (groundRushBusy(this) || this.climbT > 0) return false;   
     if (this.diveLock > 0) return false;   
@@ -6990,6 +7001,9 @@ class Fighter {
   }
   update(dt) {
     if (!this.alive) {
+      if (this.ghostMesh && this.ghostMesh.visible) this.ghostMesh.visible = false;
+      if (this.aura && this.aura.visible) this.aura.visible = false;
+      if (this.ultAura && this.ultAura.visible) this.ultAura.visible = false;
       this.deathT += dt;
       const t = clamp(this.deathT / 1.1, 0, 1);
       this.mesh.position.y = this.y - t * 1.6;
@@ -7101,7 +7115,7 @@ class Fighter {
         } else {
           this.blockT = Math.max(this.blockT, BLOCK_MIN);   
           this.ghostActiveT = Math.max(this.ghostActiveT, 0.3);
-          if (!this.isPlayer) {                             
+          if (!this.isPlayer && !this.netInput) {           
             this.blockAiT -= dt;
             if (this.blockAiT <= 0) this.endBlock();
           }
@@ -7661,6 +7675,16 @@ class Fighter {
       p.armL.scale.y = 1; p.armR.scale.y = 1;  
     }
   }
+}
+const EV_KEYS = [['tryJump', 'evJ'], ['trySkill', 'evS'], ['tryUlt', 'evU'],
+  ['tryDash', 'evD'], ['startVault', 'evV']];
+for (const [fn, ev] of EV_KEYS) {
+  const orig = Fighter.prototype[fn];
+  Fighter.prototype[fn] = function (...a) {
+    const r = orig.apply(this, a);
+    if (r) this[ev] = ((this[ev] | 0) + 1) & 15;
+    return r;
+  };
 }
 const world = {
   running: false,
@@ -8817,7 +8841,7 @@ function trapAimSpot(owner, dir) {
   };
 }
 function trapPlaceSpot(owner) {
-  if (owner.isPlayer) return trapAimSpot(owner, cameraAimDir());
+  if (owner.isPlayer || owner.netInput) return trapAimSpot(owner, aimDirOf(owner));
   const fx = Math.sin(owner.facing), fz = Math.cos(owner.facing);
   const vic = aimFighter(owner, { x: fx, y: 0, z: fz }, TRAP_REACH);
   if (vic) {
@@ -8865,9 +8889,9 @@ function releaseTrapHold(f, instant) {
     if (!f.canSpend(cost)) { f.skillCd = 0.3; if (f.isPlayer) spWarn(); return false; }
     let ok = true;
     if (hid === 'kaen') {
-      let dir;
-      if (f.isPlayer) { const a = cameraAimDir(); dir = new THREE.Vector3(a.x, a.y, a.z); f.facing = Math.atan2(a.x, a.z); }
-      else dir = new THREE.Vector3(Math.sin(f.facing), 0, Math.cos(f.facing));
+      const a0 = aimDirOf(f);
+      const dir = new THREE.Vector3(a0.x, a0.y, a0.z);
+      if (f.isPlayer) f.facing = Math.atan2(a0.x, a0.z);
       spawnProjectile(f, dir, {
         dmg: FLAME_BIND * (f.effAtk() / f.def.stats.atk),
         stun: FLAME_BIND_STUN,
@@ -9795,9 +9819,9 @@ function updateHookGuide() {
   return to;
 }
 function fireStringJail(f) {
-  let dir;
-  if (f.isPlayer) { const a = cameraAimDir(); dir = new THREE.Vector3(a.x, a.y, a.z); f.facing = Math.atan2(a.x, a.z); }
-  else dir = new THREE.Vector3(Math.sin(f.facing), 0, Math.cos(f.facing));
+  const a0 = aimDirOf(f);
+  const dir = new THREE.Vector3(a0.x, a0.y, a0.z);
+  if (f.isPlayer) f.facing = Math.atan2(a0.x, a0.z);
   const pr = spawnProjectile(f, dir, {
     dmg: WIRE_JAIL_DMG * (f.effAtk() / f.def.stats.atk),
     stun: WIRE_JAIL_STUN,
@@ -9933,7 +9957,7 @@ function wallGripAt(f) {
       const fx = Math.sin(th), fz = Math.cos(th);
       const x = f.pos.x + fx * d, z = f.pos.z + fz * d;
       if (!spotFree(x, z, f.y + 1.0, 0.18)) {
-        if (spotFree(x, z, f.y + 2.5, 0.18)) continue;
+        if (f.climbT <= 0 && spotFree(x, z, f.y + 2.5, 0.18)) continue;
         return { x, z, nx: fx, nz: fz, facing: th };
       }
     }
@@ -9966,9 +9990,21 @@ function endWallClimb(f, { onTop = false } = {}) {
   f.climbT = 0;
   if (onTop) {
     const fx = Math.sin(f.facing), fz = Math.cos(f.facing);
-    f.pos.x += fx * 0.75; f.pos.z += fz * 0.75;
-    f.y = Math.max(f.y, groundHeightAt(f.pos.x, f.pos.z, f.y + 0.5, 0.6));
-    f.grounded = true; f.vy = 0;
+    const px = f.pos.x + fx * 0.9, pz = f.pos.z + fz * 0.9;
+    const surf = highestSurfaceAt(px, pz);
+    const topY = (surf > f.y && surf <= f.y + GRUSH_CLIMB_TOP) ? surf : f.y;
+    let ox = f.pos.x, oz = f.pos.z, ok = false;
+    for (let s = 0.15; s <= 0.9001; s += 0.15) {
+      const tx = f.pos.x + fx * s, tz = f.pos.z + fz * s;
+      if (!spotFree(tx, tz, topY + 0.05, 0.5)) break;   
+      ox = tx; oz = tz; ok = true;
+    }
+    if (ok) {
+      f.pos.x = ox; f.pos.z = oz; f.y = Math.max(f.y, topY);
+      f.grounded = true; f.vy = 0;
+    } else {
+      f.grounded = false;      
+    }
   }
   return true;
 }
@@ -10364,8 +10400,7 @@ function inAnyBox(x, y, z) {
 const _zipBoxes = [];
 function zipperSpotOf(f) {
   const oy = f.y + sightYOf(f);
-  const dir = f.isPlayer ? cameraAimDir()
-    : { x: Math.sin(f.facing), y: 0, z: Math.cos(f.facing) };
+  const dir = aimDirOf(f);   
   const dl = Math.hypot(dir.x, dir.z) || 1;
   const ux = dir.x / dl, uz = dir.z / dl;            
   const s = aimSurface(f.pos.x, oy, f.pos.z, dir.x, dir.y, dir.z, ZIP_ZIP_REACH);
@@ -11125,7 +11160,7 @@ function spawnSheerHeart(owner, dir) {
   return s;
 }
 function shaThrowDir(owner, targets) {
-  if (owner.isPlayer) return cameraAimDir();
+  if (owner.isPlayer || owner.netInput) return aimDirOf(owner);
   let best = null, bd = 1e9;
   for (const t of targets) {
     if (t === owner || !t.alive) continue;
@@ -11927,6 +11962,14 @@ function applyNetInput(bot, dt) {
   if (n.jump) { bot.tryJump(); n.jump = false; }
   if (n.skill) { bot.trySkill(world.fighters); n.skill = false; }
   if (n.ult) { if (crimsonOwner(bot)) endCrimson(bot, false); else bot.tryUlt(world.fighters); n.ult = false; }
+  if (n.dash) { bot.tryDash(); n.dash = false; }
+  if (n.vault) { bot.startVault(findVaultWindow(bot)); n.vault = false; }
+  if (!n.skillHeld && bot.blockHold) bot.endBlock();
+  if (!n.skillHeld && bot.trapHoldT > 0) releaseTrapHold(bot);
+  if (bot.def.id === 'ryuji') {
+    if (n.climb && bot.climbT <= 0 && canWallClimb(bot)) startWallClimb(bot);
+    else if (!n.climb && bot.climbT > 0) endWallClimb(bot);
+  }
   bot.aimLock = !!n.atk;
 }
 function updateAI(bot, dt) {
@@ -12820,7 +12863,16 @@ function updateLabels(dt) {
 }
 const NET_TICK_HZ = 20;
 const NET_F_ALIVE = 1, NET_F_STAND = 2, NET_F_CROUCH = 4, NET_F_SWING = 8,
-  NET_F_ASTRAL = 16, NET_F_GROUND = 32, NET_F_DIVE = 64;
+  NET_F_ASTRAL = 16, NET_F_GROUND = 32, NET_F_DIVE = 64,
+  NET_F_CLIMB = 128,      
+  NET_F_BLOCK = 256;      
+function evPack(x) {
+  return ((x.evJ | 0) & 15) | (((x.evS | 0) & 15) << 4) | (((x.evU | 0) & 15) << 8)
+    | (((x.evD | 0) & 15) << 12) | (((x.evV | 0) & 15) << 16);
+}
+const EV_BITS = 9;                       
+const EV_FLAG_MASK = (1 << EV_BITS) - 1;
+const evRow = (x, flags) => flags | (evPack(x) << EV_BITS);
 function snapshotWorld() {
   const f = [];
   const fs = world.fighters;
@@ -12829,12 +12881,14 @@ function snapshotWorld() {
     const flags = (x.alive ? NET_F_ALIVE : 0) | (x.standOn ? NET_F_STAND : 0)
       | (x.crouch ? NET_F_CROUCH : 0) | (x.swingT >= 0 ? NET_F_SWING : 0)
       | (x.astral ? NET_F_ASTRAL : 0) | (x.grounded ? NET_F_GROUND : 0)
-      | (x.diveT > 0 ? NET_F_DIVE : 0);
+      | (x.diveT > 0 ? NET_F_DIVE : 0) | (x.climbT > 0 ? NET_F_CLIMB : 0)
+      | (x.blockHold ? NET_F_BLOCK : 0);
     f.push([i, r2(x.pos.x), r2(x.y), r2(x.pos.z), r2(x.facing),
-      Math.round(x.hp), Math.round(x.shield || 0), x.level | 0, flags]);
+      Math.round(x.hp), Math.round(x.shield || 0), x.level | 0, evRow(x, flags)]);
   }
   return {
     mt: r2(world.matchT || 0),
+    ...(world.btdCut ? { cut: 1 } : null),
     m: world.mapId, s: town.seed >>> 0,
     z: [r2(world.zone.cx), r2(world.zone.cz), r2(world.zone.r)],
     f,
@@ -12850,6 +12904,55 @@ function snapshotOrbs() {
     o.push([ti, r2(x.mesh.position.x), r2(x.mesh.position.y), r2(x.mesh.position.z)]);
   }
   return o;
+}
+function snapshotEnergy() {
+  const e = [];
+  const fs = world.fighters;
+  const n = Math.min(TOTAL_FIGHTERS, fs.length);
+  for (let i = 0; i < n; i++) e.push(Math.round(fs[i].energy || 0));
+  return e;
+}
+function applyEnergySnapshot(list) {
+  if (!Array.isArray(list)) return 0;
+  let n = 0;
+  for (let i = 0; i < list.length && i < world.fighters.length; i++) {
+    const v = +list[i];
+    if (Number.isFinite(v)) { world.fighters[i].energy = v; n++; }
+  }
+  return n;
+}
+function snapshotGlass() {
+  const d = [];
+  const gl = town.glassList || [];
+  for (let i = 0; i < gl.length; i++) if (!gl[i].alive) d.push(i);
+  return d;
+}
+function reviveGlass(g) {
+  if (!g || g.alive) return false;
+  g.alive = true;
+  if (g.mesh) g.mesh.visible = true;
+  g.box.dead = false;
+  if (town.buildings.indexOf(g.box) < 0) town.buildings.push(g.box);
+  return true;
+}
+function applyGlassSnapshot(list) {
+  if (!Array.isArray(list)) return 0;
+  const gl = town.glassList || [];
+  const sig = list.join(',');
+  if (sig === net.glassSig) return 0;      
+  net.glassSig = sig;
+  const dead = new Set(list);
+  let changed = 0;
+  for (let i = 0; i < gl.length; i++) {
+    const g = gl[i];
+    if (dead.has(i)) {
+      if (g.alive) { breakGlass(g); changed++; }
+    } else if (!g.alive) {
+      if (reviveGlass(g)) changed++;
+    }
+  }
+  if (changed) { town.grid = null; buildBuildingGrid(); }
+  return changed;
 }
 function applyOrbSnapshot(list) {
   if (!Array.isArray(list)) return false;
@@ -12879,7 +12982,7 @@ function applySnapshot(s) {
     x.pos.x = row[1]; x.y = row[2]; x.pos.z = row[3];
     x.facing = row[4];
     x.hp = row[5]; x.shield = row[6]; x.level = row[7];
-    const fl = row[8];
+    const fl = (row[8] | 0) & EV_FLAG_MASK;      
     x.alive = !!(fl & NET_F_ALIVE);
     x.standOn = !!(fl & NET_F_STAND);
     x.crouch = !!(fl & NET_F_CROUCH);
@@ -12903,6 +13006,9 @@ const net = {
   a: null, b: null, aT: 0, bT: 0,      
   clock: 0,                            
   sendAcc: 0, jump: false, skill: false, ult: false,
+  dash: false, vault: false,            
+  ev: null,                             
+  glassSig: '',                         
   char: 'takeru', name: '', waiting: false, msg: '', died: false,
   ping: 0,                              
 };
@@ -12959,6 +13065,7 @@ function netOnMessage(m) {
     net.a = net.b; net.aT = net.bT;
     net.b = m; net.bT = performance.now();
     if (!net.a) { net.a = m; net.aT = net.bT - 1000 / NET_TICK_HZ; net.clock = net.aT; }
+    if (m.cut) world.freezeT = Math.max(world.freezeT, 1000 / NET_TICK_HZ / 1000 + 0.03);
   } else if (m.t === 'png') {
     if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k }));
     net.ping = m.rtt || 0;
@@ -12966,6 +13073,8 @@ function netOnMessage(m) {
     if (badge && net.on) badge.textContent = `オンライン ${net.room} / 席${net.slot + 1} / ${net.ping}ms`;
   } else if (m.t === 'orbs') {
     applyOrbSnapshot(m.o);
+    if (m.gl) applyGlassSnapshot(m.gl);
+    if (m.en) applyEnergySnapshot(m.en);
   } else if (m.t === 'end') {
     netEnd(m.why === '決着' ? '試合が終わりました' : (m.why || '試合が終わりました'));
   }
@@ -12975,6 +13084,8 @@ function netStart(m) {
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   net._hist = [];   
+  net.ev = []; net.glassSig = '';   
+  net.dash = net.vault = false;
   $('netScreen').classList.add('hidden');
   $('titleScreen').classList.add('hidden');
   unmountAd('title');   
@@ -12987,7 +13098,8 @@ function netStart(m) {
   for (let i = 0; i < world.fighters.length; i++) {
     if (i === net.slot) continue;
     world.fighters[i].netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false,
-      crouch: false, jump: false, skill: false, ult: false };
+      crouch: false, jump: false, skill: false, ult: false,
+      dash: false, vault: false, climb: false, skillHeld: false };   
   }
   announce(`オンライン開始! ${m.room} / ${net.slot + 1}番`);
 }
@@ -13021,8 +13133,10 @@ function netSendInput(dt) {
     f: r2(Math.atan2(r.ux, r.uz)), dy: r2(r.dy),
     atk: !!p.attackHeld, stand: !!p.standOn, crouch: !!p.crouch,
     jump: net.jump, skill: net.skill, ult: net.ult,
+    dash: net.dash, vault: net.vault, climb: !!world.jumpHeld,
+    sk: !!world.skillHeld,
   }));
-  net.jump = net.skill = net.ult = false;      
+  net.jump = net.skill = net.ult = net.dash = net.vault = false;   
   return true;
 }
 function netApplySnapshots(dt) {
@@ -13041,7 +13155,7 @@ function netApplySnapshots(dt) {
     const rb = rowsB[i]; if (!rb) continue;
     const ra = rowsA[i] || rb;
     x.hp = rb[5]; x.shield = rb[6]; x.level = rb[7];
-    const fl = rb[8];
+    const fl = (rb[8] | 0) & EV_FLAG_MASK;       
     x.alive = !!(fl & NET_F_ALIVE);
     if (i !== net.slot) {
       x.standOn = !!(fl & NET_F_STAND);
@@ -13092,6 +13206,12 @@ function netApplySnapshots(dt) {
         x.netInput.crouch = !!(fl & NET_F_CROUCH);
       }
       x.moveDir.set(dx, 0, dz);
+      {
+        const wantBlock = !!(fl & NET_F_BLOCK);
+        if (wantBlock && !x.blockHold && x.startBlock) x.startBlock();
+        else if (!wantBlock && x.blockHold && x.endBlock) x.endBlock();
+      }
+      netMirrorActions(i, x, (rb[8] | 0) >>> EV_BITS);   
     }
     n++;
   }
@@ -13127,6 +13247,42 @@ function netCheckOutcome() {
       showResult(true, 1);
     }
   }
+}
+const EV_SHIFT = { evJ: 0, evS: 4, evU: 8, evD: 12, evV: 16 };
+function netMirrorActions(i, x, packed) {
+  if (!net.on || i === net.slot || !x || !x.alive) return 0;
+  const prev = net.ev || (net.ev = []);
+  const before = prev[i];
+  if (before === undefined) { prev[i] = packed; return 0; }   
+  if (before === packed) return 0;
+  const d = (k) => (((packed >> EV_SHIFT[k]) & 15) - ((before >> EV_SHIFT[k]) & 15) + 16) & 15;
+  let done = 0;
+  let commit = before;
+  const rep = (k, fn) => {
+    const raw = d(k);
+    if (!raw) return;
+    const cur = (before >> EV_SHIFT[k]) & 15;
+    let okN = 0;
+    for (let r = 0; r < Math.min(2, raw); r++) { if (fn()) { okN++; done++; } else break; }
+    const adv = (raw > 3) ? raw : okN;      
+    const nv = (cur + adv) & 15;
+    commit = (commit & ~(15 << EV_SHIFT[k])) | (nv << EV_SHIFT[k]);
+  };
+  rep('evJ', () => { x.grounded = true; return x.tryJump(); });
+  rep('evD', () => { x.dashCd = 0; x.stunT = 0; return x.tryDash(); });
+  rep('evV', () => { x.vaultT = -1; return x.startVault(findVaultWindow(x)); });
+  rep('evS', () => {
+    if (x.blockHold && x.endBlock) x.endBlock();
+    x.sp = x.maxSp; x.skillCd = 0; x.stunT = 0;
+    return x.trySkill(world.fighters);
+  });
+  rep('evU', () => {
+    x.sp = x.maxSp; x.ultCd = 0; x.stunT = 0;
+    if (!(x.ultLeft > 0)) x.ultLeft = 1;
+    return x.tryUlt(world.fighters);
+  });
+  prev[i] = commit;
+  return done;
 }
 function netLerpAngle(a, b, u) {
   let d = b - a;
@@ -13974,7 +14130,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v180';
+const GAME_VERSION = 'v181';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14180,6 +14336,7 @@ function animate() {
     updateBtdCut(dt);
     if (world.freezeT > 0) {
       world.freezeT -= dt;
+      if (net.on) { netApplySnapshots(dt); netSendInput(dt); }
     } else if (world.timeStop) {
       const ts = world.timeStop;
       const h = ts.holder;
@@ -14197,10 +14354,13 @@ function animate() {
       if (world.tsTickAcc > 0.55) { world.tsTickAcc = 0; sfx.tsTick(); }
       ts.t -= dt;
       if (ts.t <= 0 || !h.alive) endTimeStop();
+      if (net.on) { netApplySnapshots(dt); netSendInput(dt); }
     } else if (net.on) {
       if (world.wantJump) net.jump = true;
       if (world.wantSkill) net.skill = true;
       if (world.wantUlt) net.ult = true;
+      if (world.wantDash) net.dash = true;
+      if (world.wantVault && world.vaultWin) net.vault = true;
       updateZone(dt);              
       updatePlayer(dt);            
       for (const f of world.fighters) f.update(dt);

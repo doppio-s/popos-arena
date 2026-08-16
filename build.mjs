@@ -52,16 +52,16 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'SWING_STEER, ' +
   'spawnWallMark, WALL_MARK_LIFE, updateFx, pushOut, ' +
   'addCanal, addBridge, addGableRoof, addShop, addStall, SHOP_KINDS, finalizeBatches, ' +
-
+  // v12: 瞬間移動 / 空気弾・仕込みの切り札
   // v43 #196: 力の片鱗の溜め / #194 ダッシュの2度倒し / #195 時間停止の波紋
   'BLINK_DIST, BLINK_STEP, BLINK_INVUL, BLINK_WIND, blinkScan, startBlink, updateBlink, clearBlink, ' +
   'DASH_TAP_T, stickTapOpen, stickTapDash, spawnTimeRipple, makeTsMark, updateTsMark, clearTsMark, ' +
-
+  // v44 #200: 弾速・範囲奥義 / #199 落下奥義の狙いと殴り
   'SHOT_SPEED, BARRIER_R, BARRIER_N, ' +
   'ORB_VIEW_R, GLASS_VIEW_R, cullFarGlass, SHADOW_HALF, sun, updateSunShadow, renderer, QUALITY_STEPS, GFX_TOP, gfxMode, applyGfxMode, autoQuality, updatePerfHud, ROLLER_AIM_REACH, ROLLER_PUNCH, ROLLER_HIT_AT, rollerAimPoint, ' +
   // v44 #198: 止まった時の中へ割り込む
   'canBreakIntoTimeStop, breakIntoTimeStop, updateTsBreakIn, ' +
-
+  // v45: 有志wikiのスキル表から入ったキャラ別のレベル効果
   'applyLvBonus, updateThermal, SHOT_DMG, SHOT_DMG_ASTRAL, ' +
   // v47: 小物のコライダーと「積んで登る」導線
   'JUMP_H, JUMP_VY, GRAVITY, CLIMB_RISE, CLIMB_HW, addClimbRoute, ' +
@@ -76,7 +76,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'AIR_SPEED, AIR_LIFE, AIR_STEER, AIR_R, AIR_MAIN, AIR_EDGE, AIR_STUN, explodeAirBullet, ' +
   'AIR_RANGE, AIR_WALL_SLIDE, AIR_WALL_T, cancelAirBullet, ' +   // v144 #309 / v145 #310
   'RWND_REWIND, RWND_SAMPLE, RWND_HIST, rewindAllPositions, endTimeStop, ' +
-
+  // v13: 時間停止(2秒・溜め・1試合1回) と 落下奥義
   // ★ここを足したら test_driver.mjs の分割代入も必ず同じだけ足す(登録簿は2つある)
   'TS_DUR, TS_WINDUP, TS_DUR_BY, TS_WINDUP_BY, tsDurOf, tsWindupOf, ROLLER_STUN, ROLLER_H, ROLLER_RISE, ROLLER_HANG, ROLLER_FALL, ROLLER_R, ' +
   'isTimeStopper, fireTimeStopUlt, startTimeStop, ' +
@@ -86,7 +86,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'startRollerDrop, updateRollerDrop, clearRollerDrop, ROLLER_GHOST_OP, ' +
   'ROLLER_SLAM_T, ROLLER_SLAM_AT, ROLLER_SLAM_H, spawnRollerFist, removeRollerFist, updateRollerFist, bigRollerBlast, ' +
   'CAM_PITCH_MAX_SKY, camPitchMaxNow, ROLLER_CAM_DIST, ' +
-
+  // v54: 落下奥義(消える→左スティックで選ぶ→0.3秒後に落ちる→瞬間移動)
   // ★v95 #255: ROLLER_STEP_UP は撤去(狙点の高さの門ごと無くなった)
   'ROLLER_AIM_SPD, ROLLER_DELAY, ROLLER_TP_LOCK, highestSurfaceAt, rollerAimInput, rollerAimStep, ' +
   'rollerTeleportBack, ROLLER_DIRECT, ROLLER_DIRECT_R, ROLLER_SHOCK, ROLLER_SHOCK_R, ' +
@@ -100,7 +100,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   // v15: 本家の構図(手前にスタンド/奥に本体)
   'GHOST_NEAR_BACK, GHOST_NEAR_SIDE, GHOST_NEAR_Y, GHOST_CAM_GAP, GHOST_FOE_R, GHOST_BACK_Y, GHOST_BACK_Y_CRAMP, GHOST_BACK_BOB, GHOST_BACK_SCALE, GHOST_BACK_OP, ' +
   'ghostNearOffset, ghostCamDist, nearestFoeDist, CAM_PITCH_DEF, ' +
-
+  // v16: 攻撃スティック / 追尾弾の接触判定 / 設置爆弾
   // v42 #191: ATK_STICK_DEAD / atkStickDir / ATK_STICK_SENS / ATK_STICK_DEAD_PX は撤去
   //            (攻撃スティックは rotCam を直接叩くので、専用の感度も遊びも存在しない)
   'ATK_DRAG_R, atkStickTurn, SEEK_HIT_R, SEEK_HIT_DY, stalkerTouch, ' +
@@ -118,7 +118,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   // v113 #276: オンラインの土台(種と状態の写し)
   'seedRandom, mulberry32, rnd, NET_TICK_HZ, snapshotWorld, applySnapshot, snapshotBytes, ' +
   'applyNetInput, updateAI, ' +      // v114 #277: ネット入力の継ぎ目
-
+  // v115 #278: 時の消失(周囲だけが進む数秒)
   'startCrimson, crimsonOwner, inCrimson, updateCrimson, CRIMSON_T, CRIMSON_T6, CRIMSON_SLOW, ' +
   'VANISH_DRAIN, VANISH_BLINK, BLOCK_DRAIN_BY, blockDrainOf, zoneNextCircle, applyCrimsonView, ' +
   'endCrimson, CRIMSON_SKY, CRIMSON_C1, CRIMSON_C2, scene, ' +   /* v116 #278 */
@@ -153,8 +153,9 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'astralHitAt, ASTRAL_HIT_R, removeEmeraldDome, spawnEmeraldField, updateEmeraldField, emeraldCenter, BARRIER_HIT, BARRIER_TICKS, BARRIER_T, BARRIER_EVERY, ' +
   'emeraldOf, cancelEmerald, BARRIER_DELAY, BARRIER_MOVE_MUL, ' +
   'ultUsesOf, ULT_RETRY_MAX, ' +   // v74 #232: 奥義は回数制(時間で回復しない)
-
+  // v78 #237: 貫通 / 壁登り / 地面割り
   'pierceStrike, wallGripAt, canWallClimb, startWallClimb, endWallClimb, updateWallClimb, ' +
+  'snapshotGlass, applyGlassSnapshot, reviveGlass, snapshotEnergy, applyEnergySnapshot, netMirrorActions, evPack, evRow, EV_BITS, EV_FLAG_MASK, NET_F_CLIMB, NET_F_BLOCK, aimDirOf, ' +   // v181 #394/#396/#397/#398
   'beginGroundAim, endGroundAim, fireGroundRush, updateGroundRush, groundRushBusy, updateGroundGuide, ' +
   'GRUSH_RATE, GRUSH_PIERCE, GRUSH_PIERCE_COST, GRUSH_PIERCE_RANGE, GRUSH_PIERCE_R, ' +
   'GRUSH_CLIMB_COST, GRUSH_CLIMB_DRAIN, GRUSH_CLIMB_SPD, GRUSH_CLIMB_NEAR, GRUSH_CLIMB_MAX, ' +
@@ -162,10 +163,10 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'GRUSH_ULT_AIM_T, GRUSH_ULT_AIM_R, GRUSH_ULT_AIM_SPD, GRUSH_ULT_T, GRUSH_ULT_HIT, ' +
   'GRUSH_ULT_TICKS, GRUSH_ULT_EVERY, GRUSH_ULT_R, GRUSH_ULT_STUN, ' +
   'GRUSH_ULT_WIND, GRUSH_ULT_ARMS, GRUSH_ULT_ARM_RATE, groundDive, ' +   // v79 #239
-
+  // ★v81 #242: 追加5体(銃・剛腕・剣・炎・ジッパー)
   'SHOT_DMG_BY, SHOT_COST_BY, shotCostOf, SHOT_INTERVAL, SHOT_INTERVAL_BY, shotIntervalOf, ' +
   'SP_REGEN_STAND_BY, spRegenStandOf, explodeShotBoom, spawnFirePatch, ' +
-
+  // v83 #244: 射手の系統を差し替え
   'GUN_SHOT, GUN_SHOT_HS, GUN_SHOT_COST, HEAD_HIT_Y, HEAD_HIT_R, ' +
   'SHOT_SPREAD, SHOT_SPREAD_AI, GUN_BASE_TIGHT, GUN_BLOOM_PER_SHOT, GUN_BLOOM_MAX, GUN_BLOOM_COOL, GUN_BLOOM_DELAY, horseBloomOf, horseSpreadMulOf, spreadScreenR, aimReticleScale, RETICLE_BASE_R, GUN_FLEE_T, GUN_FLEE_MUL, GUN_SHOT_SPEED, GUN_ULT_SPREAD, ' +
   'GUN_HOMING, GUN_HOMING_COST, GUN_HOMING_SPEED, GUN_HOMING_LIFE, GUN_HOMING_TURN, GUN_HOMING_R, ' +
@@ -237,7 +238,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'AIM_CIRCLE_R, SWING_HIT_R, SWING_PT_MIN, ' +
   // v35: ラッシュを「拳の往復」で組み直した(SWING_T_PER_M / SWING_IMPACT / SWING_IMPACT_ON は廃止)
   'FIST_SPEED, FIST_BACK_SPEED, SWING_STARTUP, SWING_RECOVER, SWING_KIND_LAG, swingTiming, ' +
-
+  // v35: 弾のノックバック撤廃を「弾を1発だけ進める」形で試験するため
   'updateProjectiles, ' +
   // v30: 本家wikiの通常攻撃の実数表
   'RUSH_DMG_BY, ' +
@@ -259,9 +260,9 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'ADS, adReady, mountAd, unmountAd, ' +
   // ★v171 #351: キャラ選択カード(名前を出さない)
   'diffStars, DIFF_MAX, ' +
-
+  // ★v171 #352/#353: 時止めはレベルで伸びる / モノクロの波
   'TS_DUR_LV, TS_WAVE_N, TS_WAVE_R, TS_WAVE_LIFE, spawnTsWaves, updateTsWaves, clearTsWaves, ' +
-
+  // ★v171 #355-#359: 独壇場の固定 / ゆっくり巻き戻し / 赤い床 / 色抜き
   'horseLockDir, removeHorseGlow, beginBtdRewind, stepBtdRewind, finalizeBtdRewind, ' +
   'removeGroundWarn, updateTsChargeFx, ' +
   // ★v171 #367: アナウンスの門
