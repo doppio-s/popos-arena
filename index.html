@@ -13178,17 +13178,28 @@ function netApplySnapshots(dt) {
       const ex = gx - refX, ey = gy - refY, ez = gz - refZ;
       const d = Math.hypot(ex, ez);
       const dy = Math.abs(ey);
+      const shiftHist = (cx, cy, cz) => {
+        for (let hI = 0; hI < hist.length; hI++) {
+          hist[hI].x += cx; hist[hI].y += cy; hist[hI].z += cz;
+        }
+      };
       if (d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) {
+        shiftHist(gx - x.pos.x, gy - x.y, gz - x.pos.z);
         x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
-        hist.length = 0;
       } else {
         if (d > NET_ERR_DEAD) {
           const k = ((d - NET_ERR_DEAD) / d) * NET_PULL;
-          x.pos.x += ex * k;
-          x.pos.z += ez * k;
+          const cx = ex * k, cz = ez * k;
+          x.pos.x += cx;
+          x.pos.z += cz;
+          shiftHist(cx, 0, cz);      
         }
         const airborne = !x.grounded || Math.abs(x.vy || 0) > 0.5;
-        if (!airborne && dy > NET_ERR_DEAD_Y) x.y += ey * NET_PULL_Y;
+        if (!airborne && dy > NET_ERR_DEAD_Y) {
+          const cy = ey * NET_PULL_Y;
+          x.y += cy;
+          shiftHist(0, cy, 0);       
+        }
       }
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
@@ -14130,7 +14141,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v181';
+const GAME_VERSION = 'v182';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

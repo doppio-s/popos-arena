@@ -214,6 +214,58 @@ async function makeRoom(members) {
   return room;
 }
 
+/* ★★★v182 #404: 【走っている部屋の空席に座らせる】。
+   利用者「何故かサーバーがfullとか言われる」。
+   ★正体: ROOMS=1(無料枠のCPUが1部屋ぶんしか無い)ので、誰かが試合中だと
+     次の人は必ず「満員」になる —— つまり【友達が後から入れない】。
+     待合室は"次の部屋が空くまで"待つ作りで、最大10分待たされることになる。
+   ★部屋には最初から8席あり、人が居ない席はCPUが動かしている(v114の継ぎ目)。
+     抜けた人の席は onClose が netInput を外してCPUに戻している —— つまり
+     【席の受け渡しは元から出来ていた】。入口側でそれを使っていなかっただけ。
+   ★だから部屋を増やさずに解決する = CPUの負担は1ミリも増えない。
+   ★生きている席にだけ座らせる。死体に座らせると、入った瞬間に観戦になる。 */
+function seatInto(room, seat, c) {
+  const f = room.mod.world.fighters[seat];
+  if (!f) return false;
+  room.members[seat] = c;
+  c.room = room; c.slot = seat; c.fighter = f;
+  f.netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false, crouch: false,
+    jump: false, skill: false, ult: false,
+    dash: false, vault: false, climb: false, skillHeld: false };
+  c.sock.send(JSON.stringify({ t: 'start', room: room.id, seed: room.seed,
+    map: room.map, slot: seat, roster: room.roster }));
+  console.log(`[部屋] ${room.id} に途中参加 — 席${seat + 1} (${c.name})`);
+  return true;
+}
+function findOpenSeat() {
+  for (const room of rooms.values()) {
+    if (room.over) continue;
+    for (let i = 0; i < ROOM_MAX; i++) {
+      const m = room.members[i];
+      if (m && m.sock.open) continue;              // 人が座っている
+      const f = room.mod.world.fighters[i];
+      if (!f || !f.alive) continue;                // 倒れている席には座らせない
+      return { room, seat: i };
+    }
+  }
+  return null;
+}
+/* 待っている人を、空いている席へ順に座らせる。座れた人数を返す。
+   ★【入った瞬間に】呼ぶのが肝。待合室の時計(15秒)を待たせると、
+     友達は"満員"の画面を15秒見ることになる —— それが利用者の見た症状。 */
+function fillOpenSeats() {
+  let n = 0;
+  for (let i = waiting.length - 1; i >= 0; i--) {
+    const c = waiting[i];
+    if (!c.sock.open) continue;
+    const open = findOpenSeat();
+    if (!open) break;
+    waiting.splice(i, 1);
+    try { seatInto(open.room, open.seat, c); n++; } catch (e) { waiting.push(c); break; }
+  }
+  return n;
+}
+
 function closeRoom(room, why) {
   rooms.delete(room.id);
   for (const m of room.members) {
@@ -301,6 +353,10 @@ setInterval(async () => {
     /* ★v169 #336: 上限に達していたら部屋を作らない。★待っている人には
        「満員」と伝え続ける —— 黙って待たせると、壊れていると思われる。 */
     if (rooms.size >= ROOM_LIMIT) {
+      /* ★v182 #404: 断る前に【走っている部屋の空席】へ入れてみる。
+         ★これで「友達が後から入る」が成立する(部屋は増やさないのでCPUはそのまま)。 */
+      fillOpenSeats();
+      if (!waiting.length) { waitT = 0; return; }
       const full = JSON.stringify({ t: 'wait', n: waiting.length, need: ROOM_MAX,
         sec: 0, full: true });
       for (const m of waiting) if (m.sock.open) m.sock.send(full);
@@ -380,6 +436,10 @@ attachWs(server, {
       c.name = cleanName(m.name);
       c.char = String(m.char || 'jotaro').slice(0, 24);
       if (!c.room && !waiting.includes(c)) waiting.push(c);
+      /* ★★v182 #404: 部屋がもう立てられない時は【その場で空席を探す】。
+         ★待合室の時計を待たせると、友達は"満員"の画面を最大15秒見ることになる。 */
+      if (rooms.size >= ROOM_LIMIT) fillOpenSeats();
+      if (c.room) return;                       // 席に着けた = もう待合室に用は無い
       sock.send(JSON.stringify({ t: 'wait', n: waiting.length, need: ROOM_MAX, sec: FILL_WAIT_S }));
     } else if (m.t === 'in') {
       const n = c.fighter && c.fighter.netInput;
