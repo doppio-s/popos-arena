@@ -44,14 +44,14 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   // v39: ヴェネツィアの町(運河・橋・三角屋根・店)
   'inWater, nearCanal, canalPushDir, WATER_Y, WATER_SPD, CURB_H, CURB_W, ' +
   // v40: 突き破って入る小窓(窓台をまたげる高さに) / 障害物ヒットの跡
-  'WIN_SILL, WIN_TOP, WIN_HW, WIN_SHOP_Y0, addSill, winFrame, addGlass, breakGlass, stepOverOf, ' +
+  'WIN_SILL, WIN_TOP, WIN_HW, WIN_SHOP_Y0, addSill, winFrame, addGlass, breakGlass, stepOverOf, STEP_OVER, ' +
   // v41: 小窓の突き破り(近づくとボタン → モーションで室内へ)
   'VAULT_NEAR, VAULT_SIDE, VAULT_DY, VAULT_DUR, VAULT_IN, VAULT_ARC, ' +
   'addVaultWin, findVaultWindow, updateVault, clearVault, ' +
   // v41 #187: 振っている最中の狙い直し(回転速度の上限)
   'SWING_STEER, ' +
   'spawnWallMark, WALL_MARK_LIFE, updateFx, pushOut, ' +
-  'addCanal, addBridge, addGableRoof, addShop, addStall, SHOP_KINDS, finalizeBatches, ' +
+  'addCanal, addBridge, BRIDGE_RAIL_MIN_H, addGableRoof, addShop, addStall, SHOP_KINDS, finalizeBatches, ' +
   // v12: 瞬間移動 / 空気弾・仕込みの切り札
   // v43 #196: 力の片鱗の溜め / #194 ダッシュの2度倒し / #195 時間停止の波紋
   'BLINK_DIST, BLINK_STEP, BLINK_INVUL, BLINK_WIND, blinkScan, startBlink, updateBlink, clearBlink, ' +
