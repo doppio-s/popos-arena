@@ -5638,7 +5638,9 @@ const EN_DICT = {
   'まもなくエリア縮小!': 'Zone shrinking soon!', 'あなた': 'You',
   '流しの刺客': 'Wandering assassin',
   'やられた…': 'You died…', '👑 最後の生き残り!': '👑 Last one standing!',
-  'そのまま観戦できます': 'You can keep spectating', 'もう一回': 'Play again', 'タイトルへ': 'Title',
+  'そのまま観戦できます': 'You can keep spectating',
+  'そのまま観戦できます(試合が終わると待合室へ戻ります)':
+    'You can keep spectating — you\u2019ll return to the lobby when the match ends', 'もう一回': 'Play again', 'タイトルへ': 'Title',
   '撃破数:': 'Kills:', '到達レベル:': 'Level reached:',
   'オンラインで遊ぶ(仮)': 'Play online (beta)',
   '— キャラクター選択 —': '— CHOOSE YOUR FIGHTER —', '— ステージ —': '— STAGE —', '出撃!': 'Deploy!',
@@ -11750,7 +11752,7 @@ function updateOrbs(dt, only) {
     }
     return updateOrbPickups(dt, only);
   }
-  if (!only) {
+  if (!only && !net.on) {   
     for (let i = world.orbRespawn.length - 1; i >= 0; i--) {
       world.orbRespawn[i] -= dt;
       if (world.orbRespawn[i] <= 0) {
@@ -11763,7 +11765,7 @@ function updateOrbs(dt, only) {
   return updateOrbPickups(dt, only);
 }
 function updateOrbPickups(dt, only) {
-  const pickers = only ? (Array.isArray(only) ? only : [only]) : world.fighters;
+  const pickers = net.on ? [] : (only ? (Array.isArray(only) ? only : [only]) : world.fighters);
   for (let i = world.orbs.length - 1; i >= 0; i--) {
     const o = world.orbs[i];
     if (!only) { 
@@ -12838,6 +12840,34 @@ function snapshotWorld() {
   };
 }
 const r2 = (v) => Math.round((v || 0) * 100) / 100;
+const ORB_NET_TYPES = ['soul', 'heal', 'shield', 'shieldL'];
+function snapshotOrbs() {
+  const o = [];
+  for (const x of world.orbs) {
+    const ti = ORB_NET_TYPES.indexOf(x.type);
+    if (ti < 0 || !x.mesh) continue;
+    o.push([ti, r2(x.mesh.position.x), r2(x.mesh.position.y), r2(x.mesh.position.z)]);
+  }
+  return o;
+}
+function applyOrbSnapshot(list) {
+  if (!Array.isArray(list)) return false;
+  let sig = list.length + '|';
+  for (const r of list) sig += r[0] + ':' + r[1] + ':' + r[2] + ':' + r[3] + ';';
+  if (sig === world._orbSig) return false;      
+  world._orbSig = sig;
+  for (const x of world.orbs) {
+    if (!x.mesh) continue;
+    scene.remove(x.mesh);
+    try { x.mesh.geometry.dispose(); x.mesh.material.dispose(); } catch (e) {}
+  }
+  world.orbs.length = 0;
+  for (const r of list) {
+    const type = ORB_NET_TYPES[r[0] | 0] || 'heal';
+    spawnWorldOrb(type, r[1], r[3], Math.max(0, (r[2] || 0) - 0.8));
+  }
+  return true;
+}
 function applySnapshot(s) {
   if (!s || !s.f) return 0;
   let n = 0;
@@ -12863,6 +12893,8 @@ const NET_LERP_MS = 60;
 const NET_SEND_HZ = 30;        
 const NET_SNAP_DIST = 3.0;     
 const NET_PULL = 0.18;         
+const NET_PULL_Y = 0.30;
+const NET_SNAP_DIST_Y = 1.4;
 const net = {
   on: false, ws: null, slot: -1, roster: null, seed: 0, map: '', room: '',
   a: null, b: null, aT: 0, bT: 0,      
@@ -12929,6 +12961,8 @@ function netOnMessage(m) {
     net.ping = m.rtt || 0;
     const badge = $('netBadge');
     if (badge && net.on) badge.textContent = `オンライン ${net.room} / 席${net.slot + 1} / ${net.ping}ms`;
+  } else if (m.t === 'orbs') {
+    applyOrbSnapshot(m.o);
   } else if (m.t === 'end') {
     netEnd(m.why === '決着' ? '試合が終わりました' : (m.why || '試合が終わりました'));
   }
@@ -13013,15 +13047,24 @@ function netApplySnapshots(dt) {
     const gz = ra[3] + (rb[3] - ra[3]) * u;
     if (i === net.slot) {
       const d = Math.hypot(x.pos.x - gx, x.pos.z - gz);
-      if (d > NET_SNAP_DIST) { x.pos.x = gx; x.pos.z = gz; x.y = gy; }
-      else { x.pos.x += (gx - x.pos.x) * NET_PULL; x.pos.z += (gz - x.pos.z) * NET_PULL; x.y = gy; }
+      const dy = Math.abs(x.y - gy);
+      if (d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) {
+        x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
+      } else {
+        x.pos.x += (gx - x.pos.x) * NET_PULL;
+        x.pos.z += (gz - x.pos.z) * NET_PULL;
+        x.y += (gy - x.y) * NET_PULL_Y;
+      }
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
       const vz = (rb[3] - ra[3]) / (span / 1000);
       x.pos.x = gx; x.y = gy; x.pos.z = gz;
       x.facing = netLerpAngle(ra[4], rb[4], u);
-      if (x.netInput) { x.netInput.mx = clamp(vx / 6, -1, 1); x.netInput.mz = clamp(vz / 6, -1, 1); }
-      x.moveDir.set(clamp(vx / 6, -1, 1), 0, clamp(vz / 6, -1, 1));
+      const fresh = u < 1;
+      const dx = fresh ? clamp(vx / 6, -1, 1) : 0;
+      const dz = fresh ? clamp(vz / 6, -1, 1) : 0;
+      if (x.netInput) { x.netInput.mx = dx; x.netInput.mz = dz; }
+      x.moveDir.set(dx, 0, dz);
     }
     n++;
   }
@@ -13032,6 +13075,7 @@ function netApplySnapshots(dt) {
 }
 function netCheckOutcome() {
   if (!net.on) return;
+  refreshAlive();
   const me = world.fighters[net.slot];
   if (me && !me.alive && !net.died) {
     net.died = true;
@@ -13895,7 +13939,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v175';
+const GAME_VERSION = 'v176';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

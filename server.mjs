@@ -111,6 +111,7 @@ const TICK_HZ = Number(process.env.TICK || 20);
      手元のブラウザは 10 のまま。★世界を読み込む【前】に入れる必要がある。 */
 const MOB_ONLINE = Number(process.env.MOBS || 4);
 globalThis.__MOB_N = MOB_ONLINE;
+const ORB_HZ = 2;              // ★v176 #389: 落ちている物の一覧を配る回数
 const PING_HZ = 2;             // ★v117 #280: 往復の時間を測る回数(毎秒2回)
 /* ★★★v117 #280: 遅れ(lag)は【サーバーが測る】。クライアントに申告させない ——
    させると「私は0.5秒遅れています」と言うだけで半秒前の世界を撃てる人が出る。
@@ -246,6 +247,20 @@ setInterval(() => {
       const snap = room.mod.snapshotWorld();
       const msg = JSON.stringify({ t: 'snap', ...snap });
       for (const m of room.members) if (m && m.sock.open) m.sock.send(msg);
+    }
+    /* ★★★v176 #389: 落ちている物(チップ・回復・シールド)を配る。
+       ★写しには fighters と安置しか入っていなかったので、【撃破で落ちる金のチップが
+         繋いでいる人の画面に一度も出なかった】。v125 以降チップは唯一の成長手段
+         なので、"見えない"では済まない穴だった。
+       ★毎回の写しに混ぜると 67個で約1.4KB × 20回/秒 = 27KB/秒。
+         位置がほとんど変わらない物なので【2回/秒だけ別便】= 2.7KB/秒に収めた。 */
+    room.orbAcc = (room.orbAcc || 0) + dt;
+    if (room.orbAcc >= 1 / ORB_HZ) {
+      room.orbAcc = 0;
+      try {
+        const om = JSON.stringify({ t: 'orbs', o: room.mod.snapshotOrbs() });
+        for (const m of room.members) if (m && m.sock.open) m.sock.send(om);
+      } catch (e) { /* 世界が入れ替わる瞬間などは黙って見送る */ }
     }
     /* 終わったか(全滅 or 制限時間) */
     if (!room.over && (room.mod.world.ended || room.t > 600)) { room.over = true; room.endT = 0; }
