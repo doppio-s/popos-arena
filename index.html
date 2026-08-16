@@ -427,6 +427,7 @@ const MOB_N = (typeof globalThis.__MOB_N === 'number'
   && globalThis.__MOB_N >= 0)
   ? Math.min(10, Math.floor(globalThis.__MOB_N))
   : 10;                             
+let MOB_ACTIVE = MOB_N;
 const MOB_HP = 500;
 const LV_MAX = 6;
 const LV_THRESH = [100, 210, 390, 630, 930, 1290];
@@ -1756,7 +1757,7 @@ function buildTown(mapId, seed) {
 function buildSpawnSpots() {
   const spots = [];
   const base = rand(Math.PI * 2);
-  const N = TOTAL_FIGHTERS + MOB_N;
+  const N = TOTAL_FIGHTERS + MOB_ACTIVE;   
   for (let i = 0; i < N; i++) {
     const slotA = base + (i / N) * Math.PI * 2;
     let placed = null;
@@ -13035,6 +13036,12 @@ function netLerpAngle(a, b, u) {
 }
 function startBattle(charId, mapId, seed) {
   cleanupBattle();
+  {
+    const _r = arguments[3] || null;
+    MOB_ACTIVE = (_r && Array.isArray(_r.chars))
+      ? Math.max(0, Math.min(64, _r.chars.length - TOTAL_FIGHTERS))
+      : MOB_N;
+  }
   buildTown(mapId || pickMapId(world.mapId), seed);   
   buildZoneWall();
   world.running = true;
@@ -13057,8 +13064,11 @@ function startBattle(charId, mapId, seed) {
   const names = [...BOT_NAMES];
   for (let i = 0; i < TOTAL_FIGHTERS; i++) {
     const isMe = i === mySlot;
-    const cid = roster ? roster.chars[i] : (isMe ? charId : randPick(CHAR_ORDER));
-    const nm = roster ? roster.names[i]
+    const rawId = roster ? roster.chars[i] : (isMe ? charId : randPick(CHAR_ORDER));
+    const cid = (typeof rawId === 'string' && CHAR_DEFS[rawId]) ? rawId
+      : (isMe && CHAR_DEFS[charId] ? charId : CHAR_ORDER[0]);
+    const rawNm = roster ? roster.names[i] : null;
+    const nm = (roster && rawNm !== undefined && rawNm !== null) ? rawNm
       : (isMe ? 'あなた' : (names.splice(Math.floor(Math.random() * names.length), 1)[0] || `BOT${i}`));
     const f = new Fighter(cid, { isPlayer: isMe, name: nm });
     world.fighters.push(f);
@@ -13072,9 +13082,11 @@ function startBattle(charId, mapId, seed) {
     f.ghostActiveT = 1.2;
     applyLvBonus(f, 1);
   }
-  for (let i = 0; i < MOB_N; i++) {
+  for (let i = 0; i < MOB_ACTIVE; i++) {
     const mi = TOTAL_FIGHTERS + i;
-    const mob = new Fighter(roster ? roster.chars[mi] : randPick(CHAR_ORDER), { isPlayer: false, name: '流しの刺客' });
+    const rawMob = roster ? roster.chars[mi] : randPick(CHAR_ORDER);
+    const mobId = (typeof rawMob === 'string' && CHAR_DEFS[rawMob]) ? rawMob : CHAR_ORDER[0];
+    const mob = new Fighter(mobId, { isPlayer: false, name: '流しの刺客' });
     mob.isMob = true;
     mob.maxHp = MOB_HP; mob.hp = MOB_HP;
     mob.shield = 0; mob.maxShield = 0;
@@ -13861,7 +13873,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v173';
+const GAME_VERSION = 'v174';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

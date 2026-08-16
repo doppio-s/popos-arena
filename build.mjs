@@ -18,7 +18,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'LV_MAX, LV_GROWTH_DEF, refreshHud, updateOrbs, ' +
   'zoneRadiusAt, Fighter, town, groundHeightAt, camera, buildCharacterMesh, buildCharCards, ' +
   'ULT_COST_BY, ultCostOf, SP_COST, skillCostOf, updateCamera, SEEK_SPEED, SEEK_LIFE, SEEK_MAIN, ASTRAL_LEASH, ASTRAL_SP_DRAIN, ' +
-  'TOTAL_FIGHTERS, MOB_N, MOB_HP, ASTRAL_CEIL, ASTRAL_FLOOR, CAM_DIST, ' +
+  'TOTAL_FIGHTERS, MOB_N, MOB_ACTIVE, MOB_HP, ASTRAL_CEIL, ASTRAL_FLOOR, CAM_DIST, ' +
   'SUPPLY_STOP_R, CAM_T_MIN, CAM_PAD, CAM_FOCUS_PULL, JAB_RANGE, AIM_ASSIST_DOT, ' +
   // (v34) AIM_TURN 撤去: 攻撃・構え中の向き直りは即時化
   'aimSoftTarget, cameraAimDir, spawnWorldOrb, rangeBar, ' +
