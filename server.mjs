@@ -52,17 +52,27 @@ const ROOM_MAX = 8;            // 1部屋の人数(本家と同じ8人)
      画像と枠(iframe)と通信は https: 全体 —— ここは広告網の性質上どうしても絞れない
      (どの広告主の素材が来るか事前に分からない)。 */
 const ADS_ON = process.env.ADS === '1';
+/* ★★★v175 #387: 文字の書体(Google Fonts)を通す。
+   ★実機で見つけた: 本番の画面に
+       Refused to load the stylesheet 'https://fonts.googleapis.com/...'
+       because it violates ... "style-src 'self' 'unsafe-inline'"
+     が出ていて、【タイトルも見出しも代替書体で出ていた】。
+     手元(Live Server)はCSPを付けないので気付けない —— 公開してから初めて出る類。
+   ★通すのは2つだけ: 書体の目録(fonts.googleapis.com)と実体(fonts.gstatic.com)。
+     script は1文字も足していないので、守りの要は削れていない。 */
 const CSP_STRICT =
   "default-src 'self'; " +
   "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net; " +
-  "style-src 'self' 'unsafe-inline'; " +
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+  "font-src 'self' https://fonts.gstatic.com; " +
   "img-src 'self' data:; " +
   "connect-src 'self' ws: wss:; " +
   "frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const CSP_ADS =
   "default-src 'self'; " +
   "script-src 'self' 'unsafe-inline' https://cdn.jsdelivr.net https://adm.shinobi.jp; " +
-  "style-src 'self' 'unsafe-inline'; " +
+  "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+  "font-src 'self' https://fonts.gstatic.com; " +
   "img-src 'self' data: https:; " +
   "connect-src 'self' ws: wss: https:; " +
   "frame-src https:; " +

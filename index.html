@@ -12936,7 +12936,7 @@ function netOnMessage(m) {
 function netStart(m) {
   net.on = true; net.waiting = false;
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
-  net.a = net.b = null; net.sendAcc = 0; net.died = false;
+  net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   $('netScreen').classList.add('hidden');
   $('titleScreen').classList.add('hidden');
   unmountAd('title');   
@@ -12955,7 +12955,10 @@ function netStart(m) {
 }
 function netEnd(why) {
   const wasOn = net.on;
-  net.on = false; net.a = net.b = null;
+  net.on = false; net.a = net.b = null; net.won = false; net.died = false;
+  { const rs = $('resultScreen'); if (rs && rs.classList) rs.classList.add('hidden'); }
+  { const rb = $('retryBtn'); if (rb && rb.classList) rb.classList.remove('hidden'); }
+  unmountAd('result');
   const badge = $('netBadge'); if (badge) badge.classList.add('hidden');
   netDisconnect();
   if (!wasOn) return;
@@ -13024,9 +13027,27 @@ function netApplySnapshots(dt) {
   }
   if (B.z) { world.zone.cx = B.z[0]; world.zone.cz = B.z[1]; world.zone.r = B.z[2]; }
   world.matchT = B.mt;
-  const me = world.fighters[net.slot];
-  if (me && !me.alive && !net.died) { net.died = true; world.spectating = true; announce('やられた… 観戦中'); }
+  netCheckOutcome();
   return n;
+}
+function netCheckOutcome() {
+  if (!net.on) return;
+  const me = world.fighters[net.slot];
+  if (me && !me.alive && !net.died) {
+    net.died = true;
+    world.spectating = true;
+    const aliveNow = world.fighters.filter((f) => f.alive && !f.isMob).length;
+    me.rank = me.rank || (aliveNow + 1);
+    showResult(false, me.rank);
+  }
+  if (me && me.alive && !net.won && !net.died) {
+    const alives = world.fighters.filter((f) => f.alive && !f.isMob);
+    if (alives.length === 1 && alives[0] === me) {
+      net.won = true;
+      me.rank = 1;
+      showResult(true, 1);
+    }
+  }
 }
 function netLerpAngle(a, b, u) {
   let d = b - a;
@@ -13268,6 +13289,7 @@ function resultSubText(p) {
 }
 function showResult(won, rank) {
   const p = world.player;
+  { const rb = $('retryBtn'); if (rb && rb.classList) rb.classList.toggle('hidden', !!net.on); }
   $('resultScreen').classList.remove('hidden');
   mountAd('result');    
   $('resultScreen').style.background = won ? 'rgba(6,6,18,.72)' : 'rgba(6,6,18,.34)';
@@ -13283,7 +13305,7 @@ function showResult(won, rank) {
     $('rankLine').textContent = tr(`順位: #${rank} / ${TOTAL_FIGHTERS}`);
     sfx.lose();
   }
-  $('resultSub').innerHTML = resultSubText(p) + (won ? '' : `<br><span style="opacity:.7">${tr('そのまま観戦できます')}</span>`);
+  $('resultSub').innerHTML = resultSubText(p) + (won ? '' : `<br><span style="opacity:.7">${tr(net.on ? 'そのまま観戦できます(試合が終わると待合室へ戻ります)' : 'そのまま観戦できます')}</span>`);
 }
 addEventListener('keydown', (e) => {
   if (cfgCaptureAction) {
@@ -13873,7 +13895,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v174';
+const GAME_VERSION = 'v175';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
