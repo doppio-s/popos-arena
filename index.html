@@ -13063,7 +13063,13 @@ function netApplySnapshots(dt) {
       const fresh = u < 1;
       const dx = fresh ? clamp(vx / 6, -1, 1) : 0;
       const dz = fresh ? clamp(vz / 6, -1, 1) : 0;
-      if (x.netInput) { x.netInput.mx = dx; x.netInput.mz = dz; }
+      if (x.netInput) {
+        x.netInput.mx = dx; x.netInput.mz = dz;
+        x.netInput.facing = x.facing;
+        x.netInput.atk = !!(fl & NET_F_SWING);
+        x.netInput.stand = !!(fl & NET_F_STAND);
+        x.netInput.crouch = !!(fl & NET_F_CROUCH);
+      }
       x.moveDir.set(dx, 0, dz);
     }
     n++;
@@ -13939,7 +13945,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v176';
+const GAME_VERSION = 'v177';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
