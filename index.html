@@ -1364,12 +1364,26 @@ function aimScreenOffset(cam, fwd, pt, fovDeg, aspect, vw, vh) {
   const ndcY = (sy / depth) / th;
   return { x: ndcX * vw / 2, y: -ndcY * vh / 2, ndcX, ndcY, ok: true };
 }
+const AIM_ORIGIN_MAX = 2.5;
 const _aimRayA = { ox: 0, oy: 0, oz: 0, ux: 0, uz: 1, dy: 0 };
 const _aimRayB = { ox: 0, oy: 0, oz: 0, ux: 0, uz: 1, dy: 0 };
 function fighterAimRay(f, r) {
   r.ux = Math.sin(f.facing); r.uz = Math.cos(f.facing);
   r.ox = f.pos.x; r.oz = f.pos.z; r.oy = f.y + SWING_PT_Y; r.dy = 0;
-  if (f.netInput) { r.dy = f.netInput.dy || 0; return r; }
+  if (f.netInput) {
+    r.dy = f.netInput.dy || 0;
+    const n = f.netInput;
+    if (Number.isFinite(n.ax) && Number.isFinite(n.ay) && Number.isFinite(n.az)) {
+      const dx = n.ax - f.pos.x, dy2 = n.ay - (f.y + SWING_PT_Y), dz = n.az - f.pos.z;
+      const d = Math.hypot(dx, dy2, dz);
+      if (d <= AIM_ORIGIN_MAX) { r.ox = n.ax; r.oy = n.ay; r.oz = n.az; }
+      else if (d > 1e-4) {
+        const k = AIM_ORIGIN_MAX / d;      
+        r.ox = f.pos.x + dx * k; r.oy = f.y + SWING_PT_Y + dy2 * k; r.oz = f.pos.z + dz * k;
+      }
+    }
+    return r;
+  }
   if (!f.isPlayer) {
     let best = null, bd = 1e9;
     const rng = f.effRange ? f.effRange() + 4 : 12;
@@ -7167,7 +7181,7 @@ class Fighter {
         spawnBurst(new THREE.Vector3(a2.x + rand(-0.5, 0.5), a2.y + 0.1, a2.z + rand(-0.5, 0.5)),
           0x8a7a5a, { n: 2, speed: 2.2, up: 1.6, life: 0.4, size: 0.1 });
       }
-      if (!this.isPlayer) {
+      if (!isHuman(this)) {
         if (this.groundAim.t > 0.6) fireGroundRush(this);
       } else if (this.groundAim.t >= GRUSH_ULT_AIM_T) {
         fireGroundRush(this);        
@@ -10044,7 +10058,7 @@ function updateWallClimb(f, dt) {
 function beginGroundAim(f) {
   f.groundAim = { x: f.pos.x, z: f.pos.z, y: highestSurfaceAt(f.pos.x, f.pos.z), t: 0 };
   f.groundOrigin = { x: f.pos.x, z: f.pos.z };
-  if (!f.isPlayer) {
+  if (!isHuman(f)) {        
     let best = null, bd = GRUSH_ULT_AIM_R;
     for (const t of world.fighters) {
       if (t === f || !t.alive) continue;
@@ -11980,6 +11994,7 @@ function applyNetInput(bot, dt) {
   if (n.vault) { bot.startVault(findVaultWindow(bot)); n.vault = false; }
   if (!n.skillHeld && bot.blockHold) bot.endBlock();
   if (!n.skillHeld && bot.trapHoldT > 0) releaseTrapHold(bot);
+  if (bot.groundAim && bot.attackHeld) fireGroundRush(bot);
   if (bot.def.id === 'ryuji') {
     if (n.climb && bot.climbT <= 0 && canWallClimb(bot)) startWallClimb(bot);
     else if (!n.climb && bot.climbT > 0) endWallClimb(bot);
@@ -13118,7 +13133,8 @@ function netStart(m) {
     if (i === net.slot) continue;
     world.fighters[i].netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false,
       crouch: false, jump: false, skill: false, ult: false,
-      dash: false, vault: false, climb: false, skillHeld: false };   
+      dash: false, vault: false, climb: false, skillHeld: false,
+      ax: NaN, ay: NaN, az: NaN };   
   }
   announce(`オンライン開始! ${m.room} / ${net.slot + 1}番`);
 }
@@ -13154,6 +13170,7 @@ function netSendInput(dt) {
     jump: net.jump, skill: net.skill, ult: net.ult,
     dash: net.dash, vault: net.vault, climb: !!world.jumpHeld,
     sk: !!world.skillHeld,
+    ax: r2(r.ox), ay: r2(r.oy), az: r2(r.oz),
   }));
   net.jump = net.skill = net.ult = net.dash = net.vault = false;   
   return true;
@@ -14236,7 +14253,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v184';
+const GAME_VERSION = 'v185';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

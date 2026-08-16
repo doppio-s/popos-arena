@@ -205,7 +205,8 @@ async function makeRoom(members) {
     const f = mod.world.fighters[i];
     f.netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false, crouch: false,
       jump: false, skill: false, ult: false,
-      dash: false, vault: false, climb: false, skillHeld: false };   // ★v181 #394/#398
+      dash: false, vault: false, climb: false, skillHeld: false,
+      ax: NaN, ay: NaN, az: NaN };   // ★v181 #394/#398 ★v185 #407
     m.fighter = f;
     m.sock.send(JSON.stringify({ t: 'start', room: id, seed, map, slot: i, roster }));
   });
@@ -467,6 +468,11 @@ attachWs(server, {
          タケルのブロッキング/カゲミツの時飛ばし/レンジの設置狙いを
          【一度始めたら二度と解けない】(精神力が尽きるまで吸われ続ける)。 */
       n.skillHeld = !!m.sk;
+      /* ★★★v185 #407: 狙いの線の【起点】。角度だけだとサーバーは体の中心から
+         線を引くので、手元のクロスヘア(肩越しの注視点)と別の物に当たる。
+         ★範囲は広めに取って、体からの距離の制限は index.html 側(AIM_ORIGIN_MAX)で
+           掛ける —— "どこまで許すか"の判断は世界の側に1つだけ置く。 */
+      n.ax = fin(m.ax, -600, 600); n.ay = fin(m.ay, -100, 400); n.az = fin(m.az, -600, 600);
     } else if (m.t === 'pog') {
       /* ★v117 #280: 返事が返ってきた。★自分が送った番号(k)の返事だけを見る ——
          見ないと、古い返事や作った返事で遅れをいくらでも盛れる。 */
