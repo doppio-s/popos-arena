@@ -1391,6 +1391,7 @@ function fighterAimRay(f, r) {
   if (la) { r.ox = la.x; r.oy = la.y; r.oz = la.z; }
   return r;
 }
+const isHuman = (f) => !!(f && (f.isPlayer || f.netInput));
 function aimDirOf(f) {
   if (f && f.isPlayer) return cameraAimDir();
   const dy = (f && f.netInput) ? (f.netInput.dy || 0) : 0;
@@ -6300,7 +6301,7 @@ class Fighter {
           dir = new THREE.Vector3(Math.sin(ang), 0, Math.cos(ang));
         }
       }
-      let sprd = this.isPlayer ? SHOT_SPREAD : SHOT_SPREAD_AI;
+      let sprd = isHuman(this) ? SHOT_SPREAD : SHOT_SPREAD_AI;   
       if (this.def.id === 'dan') {
         sprd *= horseSpreadMulOf(this);      
         this.shotBloom = Math.min(GUN_BLOOM_MAX, (this.shotBloom || 0) + GUN_BLOOM_PER_SHOT);
@@ -6660,7 +6661,7 @@ class Fighter {
       if (!this.canSpend(skillCost)) { if (this.isPlayer) spWarn(); return false; }
       this.spendSp(skillCost);
     }
-    if (id !== 'takeru' && id !== 'kenya') this.skillCd = this.isPlayer ? 0 : this.def.skillCd;
+    if (id !== 'takeru' && id !== 'kenya') this.skillCd = isHuman(this) ? 0 : this.def.skillCd;   
     this.ghostActiveT = Math.max(this.ghostActiveT, 3);
     if (holdSkill) {
       if (!this.canSpend(skillCost)) { this.skillCd = 0.3; if (this.isPlayer) spWarn(); return false; }
@@ -6686,10 +6687,10 @@ class Fighter {
       const TOGGLE_GUARD = 0.18;
       if (this.astral) {
         this.endAstral(false);
-        this.skillCd = this.isPlayer ? TOGGLE_GUARD : 1.2;
+        this.skillCd = isHuman(this) ? TOGGLE_GUARD : 1.2;   
       } else {
-        if (!this.beginAstral()) { this.skillCd = this.isPlayer ? TOGGLE_GUARD : 0.3; return false; }
-        this.skillCd = this.isPlayer ? TOGGLE_GUARD : 0.5;
+        if (!this.beginAstral()) { this.skillCd = isHuman(this) ? TOGGLE_GUARD : 0.3; return false; }   
+        this.skillCd = isHuman(this) ? TOGGLE_GUARD : 0.5;   
       }
     } else if (id === 'takeru') {
       this.startBlock();
@@ -6765,7 +6766,7 @@ class Fighter {
       const pr = world.projectiles[world.projectiles.length - 1];
       pr.homing = true;               
       pr.homeR = GUN_HOMING_R;      
-      this.skillCd = this.isPlayer ? 0 : this.def.skillCd;
+      this.skillCd = isHuman(this) ? 0 : this.def.skillCd;   
       sfx.pew(Math.max(0.4, volAt(this.pos)));
       if (this.isPlayer) announce('曲がる弾丸!');
     } else if (id === 'van') {
@@ -6773,7 +6774,7 @@ class Fighter {
     } else if (id === 'kageto') {
       if (this.airBullet && this.airBullet.life > 0) {
         explodeAirBullet(this.airBullet);
-        this.skillCd = this.isPlayer ? 0 : this.def.skillCd;   
+        this.skillCd = isHuman(this) ? 0 : this.def.skillCd;   
         return true;
       }
       let dir;
@@ -6791,7 +6792,7 @@ class Fighter {
       pr.air = true;          
       pr.steer = AIR_STEER;
       this.airBullet = pr;
-      this.skillCd = this.isPlayer ? 0 : 0.5;
+      this.skillCd = isHuman(this) ? 0 : 0.5;   
       spawnBurst(this.pos.clone().add(new THREE.Vector3(dir.x * 0.8, 1.3, dir.z * 0.8)),
         0xa855f7, { n: 8, speed: 3, life: 0.3, size: 0.09 });   
       sfx.pew(Math.max(0.4, volAt(this.pos)));
@@ -6807,7 +6808,7 @@ class Fighter {
     } else if (id === 'ryuji') {
       const dir = aimDirOf(this);   
       pierceStrike(this, targets, dir);
-      this.skillCd = this.isPlayer ? 0 : this.def.skillCd;
+      this.skillCd = isHuman(this) ? 0 : this.def.skillCd;   
     }
     return true;
   }
@@ -7124,7 +7125,7 @@ class Fighter {
     }
     if (this.blockT > 0) this.blockT = Math.max(0, this.blockT - dt);
     if (this.def.id === 'van') {
-      this.addEnergy((this.isPlayer ? ENERGY_TRICKLE : ENERGY_TRICKLE * 1.35) * dt);
+      this.addEnergy((isHuman(this) ? ENERGY_TRICKLE : ENERGY_TRICKLE * 1.35) * dt);   
     }
     if (!this.alive) return; 
     this._fxAcc += dt;
@@ -8880,7 +8881,7 @@ function releaseTrapHold(f, instant) {
     }
     const cost = got.chars.length ? GRIP_SCRAPE_COST : GRIP_SCRAPE_COST_ITEM;
     f.spendSp(cost);
-    f.skillCd = f.isPlayer ? 0 : f.def.skillCd;
+    f.skillCd = isHuman(f) ? 0 : f.def.skillCd;   
     if (f.isPlayer && !canPullChars) spWarn();   
     return true;
   }
@@ -8903,14 +8904,14 @@ function releaseTrapHold(f, instant) {
     }
     if (!ok) { f.skillCd = 0.3; return false; }
     f.spendSp(cost);
-    f.skillCd = f.isPlayer ? 0 : f.def.skillCd;
+    f.skillCd = isHuman(f) ? 0 : f.def.skillCd;   
     return true;
   }
   if (!f.canSpend(SP_COST.bombArm)) { f.skillCd = 0.3; if (f.isPlayer) spWarn(); return false; }
   const b = plantTrapBomb(f);
   if (!b) { f.skillCd = 0.4; return false; }
   f.spendSp(SP_COST.bombArm);                        
-  f.skillCd = f.isPlayer ? 0 : f.def.skillCd;
+  f.skillCd = isHuman(f) ? 0 : f.def.skillCd;   
   if (f.isPlayer) sfx.plant();
   return true;
 }
@@ -14141,7 +14142,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v182';
+const GAME_VERSION = 'v183';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
