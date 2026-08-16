@@ -144,6 +144,12 @@
   #netBadge { position: absolute; left: 10px; top: 40px; font-size: 11px; letter-spacing: .1em;
     color: #7fd8ff; background: rgba(8,14,34,.72); border: 1px solid #2c3a6a; border-radius: 6px;
     padding: 3px 8px; pointer-events: none; z-index: 25; }
+  #blackBox { position: absolute; right: 8px; top: 96px; max-width: 46vw; max-height: 58vh;
+    overflow: auto; font-size: 10px; line-height: 1.35;
+    font-family: ui-monospace, Menlo, Consolas, monospace;
+    color: #ffe08a; background: rgba(10,6,2,.86); border: 1px solid #7a5a20; border-radius: 8px;
+    padding: 6px 8px; z-index: 60; white-space: pre-wrap; cursor: pointer; }
+  #blackBox .hd { color: #ffd166; font-weight: 700; letter-spacing: .06em; }
   #crimsonClock small { display: block; font-size: 42%; letter-spacing: .18em; opacity: .9; }
   #c.timestop { filter: saturate(.22) contrast(1.12) brightness(.88); }
   #btdCut { position: fixed; inset: 0; pointer-events: none; z-index: 34; opacity: 0; }
@@ -277,6 +283,7 @@
 <div id="breathWrap"><div id="breathFill"></div><div id="breathLabel">いき</div></div>
 <div id="crimsonOverlay"></div>
 <div id="netBadge" class="hidden">オンライン</div>
+<div id="blackBox" class="hidden"></div>
 <div id="btdCut">
   <div class="veil"></div>
   <svg class="eye" viewBox="0 0 400 250" preserveAspectRatio="xMidYMid meet">
@@ -4241,6 +4248,97 @@ function updateUnstick(f, dt) {
   if (ok && f.isPlayer) announce('引っかかりから抜け出した');
   return ok;
 }
+const BB_HOLD = 1.5;        
+const BB_KEEP = 6;          
+const bb = { t: 0, stuckT: 0, armed: true, rows: [], sentPrev: 0, rateT: 0, rate: 0, hidden: false };
+function bbReset() { bb.t = 0; bb.stuckT = 0; bb.armed = true; bb.rows.length = 0; bb.rate = 0; bb.sentPrev = 0; bb.rateT = 0; bb.hidden = false; const e = $('blackBox'); if (e) e.classList.add('hidden'); }
+function bbBlockers(f, max) {
+  const out = [];
+  for (const b of town.buildings) {
+    if (b.dead) continue;
+    if (f.y >= b.h - 0.01) continue;
+    if (f.y + 1.65 <= (b.y0 || 0)) continue;
+    if (b.standable && b.h - f.y <= stepOverOf(b)) continue;
+    const ox = b.hw + 0.55 - Math.abs(f.pos.x - b.x);
+    const oz = b.hd + 0.55 - Math.abs(f.pos.z - b.z);
+    if (ox > -0.25 && oz > -0.25) {
+      out.push({ s: Math.min(ox, oz),
+        txt: `高${b.h.toFixed(1)} 下${(b.y0 || 0).toFixed(1)} 半${b.hw.toFixed(2)}x${b.hd.toFixed(2)}`
+          + `${b.glassRef ? ' 窓' : ''} 重${ox.toFixed(2)},${oz.toFixed(2)}` });
+    }
+  }
+  out.sort((a, c) => c.s - a.s);
+  return out.slice(0, max).map((o) => o.txt);
+}
+function bbGap(f) {
+  if (!net.on || !net.b) return null;
+  for (const r of net.b.f) if (r[0] === net.slot) return Math.hypot(r[1] - f.pos.x, r[3] - f.pos.z);
+  return null;
+}
+function bbRecord(f, dt) {
+  const g = bbGap(f);
+  const st = [];
+  if (f.stunT > 0) st.push('気絶' + f.stunT.toFixed(1));
+  if (f.slowT > 0) st.push('鈍足');
+  if (f.knock && f.knock.lengthSq() > 0.001) st.push('のけぞり');
+  if (f.attackHeld || f.swingT >= 0) st.push('攻撃中');
+  if (f.blockHold) st.push('構え');
+  if (f.standOn) st.push('スタンドON');
+  if (f.crouch) st.push('しゃがみ');
+  if (f.vaultT >= 0) st.push('窓抜け');
+  if (f.rollerT >= 0 || f.rollerHidden || f.rollerAiming) st.push('ローラー');
+  if (f.blinkT >= 0) st.push('瞬撃');
+  if (f.climbT > 0) st.push('壁登り');
+  if (f.diveT > 0) st.push('潜行');
+  if (f.astral) st.push('幽体');
+  if (f.ropeT >= 0) st.push('糸');
+  if (f.inWater) st.push('水中');
+  if (f.spExhaust > 0) st.push('息切れ');
+  if (!f.grounded) st.push('空中');
+  if (world.timeStop) st.push('時止め');
+  if (world.freezeT > 0) st.push('演出停止');
+  const blockers = bbBlockers(f, 3);
+  bb.rows.unshift({
+    t: bb.t,
+    pos: `(${f.pos.x.toFixed(1)}, ${f.pos.z.toFixed(1)}) 高さ${f.y.toFixed(2)}`,
+    ask: `${Math.hypot(f.moveDir.x, f.moveDir.z).toFixed(2)}`,
+    spd: `${(f._bbSpd || 0).toFixed(1)}m/s 歩幅${(f._bbStep || 0).toFixed(3)}`,
+    st: st.length ? st.join(' ') : 'なし',
+    net: net.on
+      ? `送信${bb.rate}/秒 ズレ${g === null ? '?' : g.toFixed(2) + 'm'} 線${net.ws ? net.ws.readyState : '無'} 遅${Math.round(net.ping || 0)}ms dt${(dt * 1000).toFixed(1)}ms`
+      : `オフライン dt${(dt * 1000).toFixed(1)}ms`,
+    box: blockers.length ? blockers : ['まわりに箱なし'],
+  });
+  if (bb.rows.length > BB_KEEP) bb.rows.length = BB_KEEP;
+  bbRender();
+}
+function bbRender() {
+  const e = $('blackBox');
+  if (!e) return;
+  if (!bb.rows.length || bb.hidden) { e.classList.add('hidden'); return; }
+  let h = `<div class="hd">引っかかり記録 ${bb.rows.length}件 (押すと閉じる)</div>`;
+  for (const r of bb.rows) {
+    h += `\n${r.t.toFixed(0)}秒 ${r.pos}\n  入力${r.ask} 出た速さ${r.spd}\n  状態 ${r.st}\n  ${r.net}\n`;
+    for (const b of r.box) h += `  ${b}\n`;
+  }
+  e.innerHTML = h;
+  e.classList.remove('hidden');
+}
+function bbUpdate(f, dt) {
+  if (!f) return;
+  bb.t += dt;
+  bb.rateT += dt;
+  if (bb.rateT >= 1) { bb.rate = (net.sentN | 0) - bb.sentPrev; bb.sentPrev = net.sentN | 0; bb.rateT = 0; }
+  const asking = Math.hypot(f.moveDir.x, f.moveDir.z) > 0.05;
+  if (!f.alive || world.spectating || !asking) { bb.stuckT = 0; bb.armed = true; return; }
+  const want = (f._bbSpd || 0) * dt;
+  const got = Math.hypot(f.pos.x - (bb.px === undefined ? f.pos.x : bb.px),
+    f.pos.z - (bb.pz === undefined ? f.pos.z : bb.pz));
+  bb.px = f.pos.x; bb.pz = f.pos.z;
+  if (want > 1e-4 && got < want * 0.17) bb.stuckT += dt;
+  else { bb.stuckT = 0; bb.armed = true; }
+  if (bb.stuckT >= BB_HOLD && bb.armed) { bb.armed = false; bbRecord(f, dt); }
+}
 function pickEscapeDir(x, z, y, goalA, avoidA) {
   let bestA = goalA + Math.PI, bestS = -1e9;
   for (let k = 0; k < 16; k++) {
@@ -7304,6 +7402,7 @@ class Fighter {
     }
     const ghostWall = (this.diveT > 0 || inZipper(this));
     const stepD = Math.hypot(stepDx, stepDz);
+    if (this.isPlayer) { this._bbSpd = spd; this._bbStep = stepD; }
     const nSubDt = Math.min(8, Math.max(1, Math.round(dt / (1 / 60))));
     const nSub = Math.max(stepD > 0.3 ? Math.min(16, Math.ceil(stepD / 0.3)) : 1, nSubDt);
     for (let k = 0; k < nSub; k++) {
@@ -13217,6 +13316,7 @@ function netSendInput(dt) {
   net.sendAcc = 0;
   const p = world.player;
   if (!p) return false;
+  net.sentN = (net.sentN | 0) + 1;      
   const r = fighterAimRay(p, { ux: 0, uz: 0, ox: 0, oy: 0, oz: 0, dy: 0 });
   let smx = p.moveDir.x, smz = p.moveDir.z;
   if (p.rollerAiming) {
@@ -13488,6 +13588,7 @@ function startBattle(charId, mapId, seed) {
   world.matchT = 0;
   world.ended = false;
   world.spectating = false;
+  bbReset();                 
   world.standHeld = false;
   world.skillHeld = false;
   world.crouchLatch = false;
@@ -14042,6 +14143,8 @@ bindBtn('jumpBtn',
   () => { world.wantJump = true; world.jumpHeld = true; },
   () => { world.jumpHeld = false; });
 bindBtn('vaultBtn', () => { world.wantVault = true; });   
+{ const _bbEl = $('blackBox');
+  if (_bbEl) _bbEl.addEventListener('click', () => { bb.hidden = true; _bbEl.classList.add('hidden'); }); }
 bindBtn('crouchBtn', () => { world.wantCrouch = true; }, () => { world.wantCrouch = false; });
 world.cfg = loadCfg();
 world.keyMap = keyActionMap(world.cfg);
@@ -14314,7 +14417,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v189';
+const GAME_VERSION = 'v190';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14518,6 +14621,7 @@ function animate() {
   updatePerfHud(rawDt);
   if (world.running) {
     updateBtdCut(dt);
+    bbUpdate(world.player, dt);   
     if (world.freezeT > 0) {
       world.freezeT -= dt;
       if (net.on) { netApplySnapshots(dt); netSendInput(dt); }
