@@ -155,7 +155,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'ultUsesOf, ULT_RETRY_MAX, ' +   // v74 #232: 奥義は回数制(時間で回復しない)
   // v78 #237: 貫通 / 壁登り / 地面割り
   'pierceStrike, wallGripAt, canWallClimb, startWallClimb, endWallClimb, updateWallClimb, ' +
-  'snapshotGlass, applyGlassSnapshot, reviveGlass, snapshotEnergy, applyEnergySnapshot, netMirrorActions, evPack, evRow, isHuman, EV_BITS, EV_FLAG_MASK, NET_F_CLIMB, NET_F_BLOCK, aimDirOf, ' +   // v181 #394/#396/#397/#398
+  'snapshotGlass, applyGlassSnapshot, reviveGlass, snapshotEnergy, applyEnergySnapshot, netMirrorActions, netFeedback, netLogHit, netLogKill, evPack, evRow, isHuman, EV_BITS, EV_FLAG_MASK, NET_F_CLIMB, NET_F_BLOCK, aimDirOf, ' +   // v181 #394/#396/#397/#398
   'beginGroundAim, endGroundAim, fireGroundRush, updateGroundRush, groundRushBusy, updateGroundGuide, ' +
   'GRUSH_RATE, GRUSH_PIERCE, GRUSH_PIERCE_COST, GRUSH_PIERCE_RANGE, GRUSH_PIERCE_R, ' +
   'GRUSH_CLIMB_COST, GRUSH_CLIMB_DRAIN, GRUSH_CLIMB_SPD, GRUSH_CLIMB_NEAR, GRUSH_CLIMB_MAX, ' +

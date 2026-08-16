@@ -5217,6 +5217,16 @@ const dmgPool = [];
     dmgPool.push({ mesh: m, free: true, cv, ctx, tx });
   }
 })();
+function netLogHit(victim, attacker) {
+  const a = world.netHits || (world.netHits = []);
+  if (a.length > 60) a.splice(0, a.length - 60);
+  a.push(world.fighters.indexOf(victim), attacker ? world.fighters.indexOf(attacker) : -1);
+}
+function netLogKill(victim, attacker) {
+  const a = world.netKills || (world.netKills = []);
+  if (a.length > 24) a.splice(0, a.length - 24);
+  a.push(world.fighters.indexOf(victim), attacker ? world.fighters.indexOf(attacker) : -1);
+}
 function spawnDmgNum(target, amount) {
   const slot = dmgPool.find((s) => s.free);
   if (!slot) return;
@@ -6098,6 +6108,7 @@ class Fighter {
       spawnBurst(this.pos.clone().add(new THREE.Vector3(0, 1.4, 0)),
         0x9fd8ff, { n: 4, speed: 3.5, life: 0.28, size: 0.09 });
       if (amount <= 0) {
+        netLogHit(this, attacker);    
         this.hitFlashT = 0.18;
         this.regenDelay = 5;
         if (attacker && attacker !== this && attacker.alive) { this.aggroOn = attacker; this.aggroT = AGGRO_MEM_T; }
@@ -6106,6 +6117,7 @@ class Fighter {
       }
     }
     this.hp = Math.max(0, this.hp - amount);
+    netLogHit(this, attacker);        
     this.hitFlashT = 0.18;
     this.regenDelay = 5;
     if (this.def.id === 'dan' && this.level >= 1) this.fleeT = GUN_FLEE_T;
@@ -6129,6 +6141,7 @@ class Fighter {
   }
   die(attacker) {
     if (!this.alive) return;
+    netLogKill(this, attacker);       
     if (this.btdArmed && !world.timeStop && !world.tsResolving) {
       this.btdArmed = false;
       this.btdUsed = true;
@@ -12890,6 +12903,8 @@ function snapshotWorld() {
   return {
     mt: r2(world.matchT || 0),
     ...(world.btdCut ? { cut: 1 } : null),
+    ...((world.netHits && world.netHits.length) ? { hit: world.netHits.splice(0) } : null),
+    ...((world.netKills && world.netKills.length) ? { kil: world.netKills.splice(0) } : null),
     m: world.mapId, s: town.seed >>> 0,
     z: [r2(world.zone.cx), r2(world.zone.cz), r2(world.zone.r)],
     f,
@@ -13009,6 +13024,7 @@ const net = {
   sendAcc: 0, jump: false, skill: false, ult: false,
   dash: false, vault: false,            
   ev: null,                             
+  dmgPrev: null,                        
   glassSig: '',                         
   char: 'takeru', name: '', waiting: false, msg: '', died: false,
   ping: 0,                              
@@ -13067,6 +13083,7 @@ function netOnMessage(m) {
     net.b = m; net.bT = performance.now();
     if (!net.a) { net.a = m; net.aT = net.bT - 1000 / NET_TICK_HZ; net.clock = net.aT; }
     if (m.cut) world.freezeT = Math.max(world.freezeT, 1000 / NET_TICK_HZ / 1000 + 0.03);
+    netFeedback(m);
   } else if (m.t === 'png') {
     if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k }));
     net.ping = m.rtt || 0;
@@ -13086,6 +13103,7 @@ function netStart(m) {
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   net._hist = [];   
   net.ev = []; net.glassSig = '';   
+  net.dmgPrev = [];                 
   net.dash = net.vault = false;
   $('netScreen').classList.add('hidden');
   $('titleScreen').classList.add('hidden');
@@ -13259,6 +13277,82 @@ function netCheckOutcome() {
       showResult(true, 1);
     }
   }
+}
+function netFeedback(m) {
+  if (!net.on || !m || !m.f) return 0;
+  const prev = net.dmgPrev || (net.dmgPrev = []);
+  const by = {};
+  if (Array.isArray(m.hit)) for (let i = 0; i + 1 < m.hit.length; i += 2) by[m.hit[i]] = m.hit[i + 1];
+  let n = 0;
+  for (const row of m.f) {
+    const i = row[0] | 0;
+    const x = world.fighters[i];
+    if (!x) continue;
+    const hp = row[5], sh = row[6], lv = row[7] | 0;
+    const p0 = prev[i];
+    prev[i] = { hp, sh, lv };
+    if (!p0) continue;                       
+    const dHp = p0.hp - hp, dSh = p0.sh - sh;
+    const self = (i === net.slot);
+    const pos = x.pos;
+    if (dHp > 0 || dSh > 0) {
+      const amount = dHp + dSh;
+      x.hitFlashT = 0.18;
+      x.regenDelay = 5;
+      if (x.level >= 1) x.ghostActiveT = Math.max(x.ghostActiveT, 2);
+      if (dHp > 0) {
+        spawnBurst(pos.clone().add(new THREE.Vector3(0, 1.2, 0)), 0xff6a8a,
+          { n: 6, speed: 4, up: 1.5, life: 0.3, size: 0.1 });
+      } else {
+        spawnBurst(pos.clone().add(new THREE.Vector3(0, 1.4, 0)), 0x9fd8ff,
+          { n: 4, speed: 3.5, life: 0.28, size: 0.09 });
+      }
+      sfx.hit(volAt(pos));
+      if (self) {
+        const el = $('hitFlash');
+        if (el && el.style) {
+          el.style.opacity = clamp(amount / 220, 0.25, 0.85);
+          clearTimeout(net._flashTo);
+          net._flashTo = setTimeout(() => { const e2 = $('hitFlash'); if (e2 && e2.style) e2.style.opacity = 0; }, 90);
+        }
+        shake(clamp(amount * 0.002, 0.08, 0.4));
+      }
+      if (!self && by[i] === net.slot) {
+        spawnDmgNum(x, amount);
+        world.hitMarkT = 0.18;
+        if (sfx.hitmark) sfx.hitmark();
+      }
+      n++;
+    } else if (dHp < 0 || dSh < 0) {
+      if (dHp < 0) {
+        spawnBurst(pos.clone(), 0x5aff9a, { n: 8, speed: 3, life: 0.4 });
+        if (self) sfx.heal();
+      }
+      if (dSh < 0) {
+        spawnBurst(pos.clone(), 0x9fd8ff, { n: 10, speed: 4, up: 2, life: 0.5 });
+        if (self) { sfx.orb(); announce(`シールド +${Math.round(-dSh)}`); }
+      }
+      n++;
+    }
+    if (lv > p0.lv) {
+      spawnBurst(pos.clone().add(new THREE.Vector3(0, 1, 0)), 0xffd76a,
+        { n: 14, speed: 5, up: 3, life: 0.6 });
+      spawnRing(pos, 0xffd76a, { r1: 2.6, life: 0.45 });
+      if (self) { sfx.orb(); announce('レベルアップ!'); }
+      n++;
+    }
+  }
+  if (Array.isArray(m.kil)) {
+    for (let i = 0; i + 1 < m.kil.length; i += 2) {
+      const v = world.fighters[m.kil[i] | 0];
+      const a = (m.kil[i + 1] | 0) >= 0 ? world.fighters[m.kil[i + 1] | 0] : null;
+      if (!v) continue;
+      pushKillFeed(a, v);
+      if (a && a === world.fighters[net.slot] && v !== a) { world.hitMarkT = 0.3; if (sfx.hitmark) sfx.hitmark(); }
+      n++;
+    }
+  }
+  return n;
 }
 const EV_SHIFT = { evJ: 0, evS: 4, evU: 8, evD: 12, evV: 16 };
 function netMirrorActions(i, x, packed) {
@@ -14142,7 +14236,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v183';
+const GAME_VERSION = 'v184';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
