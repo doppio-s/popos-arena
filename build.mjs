@@ -51,7 +51,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   // v41 #187: 振っている最中の狙い直し(回転速度の上限)
   'SWING_STEER, ' +
   'spawnWallMark, WALL_MARK_LIFE, updateFx, pushOut, ' +
-  'addCanal, addBridge, BRIDGE_RAIL_MIN_H, addGableRoof, addShop, addStall, SHOP_KINDS, finalizeBatches, ' +
+  'addCanal, addBridge, BRIDGE_RAIL_MIN_H, UNSTUCK_T, UNSTUCK_MAX_R, trappedInGeometry, unstickFighter, updateUnstick, addGableRoof, addShop, addStall, SHOP_KINDS, finalizeBatches, ' +
   // v12: 瞬間移動 / 空気弾・仕込みの切り札
   // v43 #196: 力の片鱗の溜め / #194 ダッシュの2度倒し / #195 時間停止の波紋
   'BLINK_DIST, BLINK_STEP, BLINK_INVUL, BLINK_WIND, blinkScan, startBlink, updateBlink, clearBlink, ' +
