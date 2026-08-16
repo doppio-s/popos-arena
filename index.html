@@ -3310,6 +3310,7 @@ function breakGlass(g) {
   if (!g.alive) return;
   g.alive = false;
   g.mesh.visible = false;
+  g._predT = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
   g.box.dead = true;                       
   const i = town.buildings.indexOf(g.box);
   if (i >= 0) town.buildings.splice(i, 1);
@@ -12976,19 +12977,24 @@ function reviveGlass(g) {
   if (town.buildings.indexOf(g.box) < 0) town.buildings.push(g.box);
   return true;
 }
+const GLASS_GRACE_MS = 1100;
 function applyGlassSnapshot(list) {
   if (!Array.isArray(list)) return 0;
   const gl = town.glassList || [];
+  let mine = '';
+  for (let i = 0; i < gl.length; i++) if (!gl[i].alive) mine += (mine ? ',' : '') + i;
   const sig = list.join(',');
-  if (sig === net.glassSig) return 0;      
-  net.glassSig = sig;
+  if (sig === mine) return 0;              
   const dead = new Set(list);
+  const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
   let changed = 0;
   for (let i = 0; i < gl.length; i++) {
     const g = gl[i];
     if (dead.has(i)) {
       if (g.alive) { breakGlass(g); changed++; }
+      g._predT = -1e9;                     
     } else if (!g.alive) {
+      if (now - (g._predT === undefined ? -1e9 : g._predT) < GLASS_GRACE_MS) continue;
       if (reviveGlass(g)) changed++;
     }
   }
@@ -13050,7 +13056,6 @@ const net = {
   dash: false, vault: false,            
   ev: null,                             
   dmgPrev: null,                        
-  glassSig: '',                         
   char: 'takeru', name: '', waiting: false, msg: '', died: false,
   ping: 0,                              
 };
@@ -13127,7 +13132,7 @@ function netStart(m) {
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   net._hist = [];   
-  net.ev = []; net.glassSig = '';   
+  net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
   $('netScreen').classList.add('hidden');
@@ -14268,7 +14273,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v186';
+const GAME_VERSION = 'v187';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
