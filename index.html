@@ -4202,14 +4202,14 @@ function pushOut(pos, r, y, fighter) {
   if (d > maxD) { pos.x *= maxD / d; pos.z *= maxD / d; }
 }
 const _nbProbe = [];
-function spotFree(x, z, y, r) {
+function spotFree(x, z, y, r, passGlass) {
   const boxes = nearBoxes(x, z, _nbProbe);
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i];
     if (y >= b.h - 0.01) continue;
     if (y + 1.65 <= (b.y0 || 0)) continue;
     if (b.standable && b.h - y <= stepOverOf(b)) continue;
-    if (b.glassRef && !b.glassRef.alive) continue;
+    if (b.glassRef && (!b.glassRef.alive || passGlass)) continue;
     if (Math.abs(x - b.x) < b.hw + r && Math.abs(z - b.z) < b.hd + r) return false;
   }
   return true;
@@ -4274,12 +4274,19 @@ function updateUnstick(f, dt) {
   }
   return ok;
 }
-function trySlideMove(pos, dx, dz, y, r) {
+function trySlideMove(pos, dx, dz, y, r, fighter) {
   if (dx === 0 && dz === 0) return;
-  const x1 = pos.x + dx, z1 = pos.z + dz;
-  if (spotFree(x1, z1, y, r)) { pos.x = x1; pos.z = z1; return; }
-  if (Math.abs(dx) > 1e-8 && spotFree(pos.x + dx, pos.z, y, r)) { pos.x += dx; return; }
-  if (Math.abs(dz) > 1e-8 && spotFree(pos.x, pos.z + dz, y, r)) { pos.z += dz; }
+  const passGlass = !!(fighter && (fighter.dashT > 0 || fighter.invulnT > 0 || !fighter.grounded));
+  const x0 = pos.x, z0 = pos.z;
+  if (!spotFree(x0, z0, y, r, passGlass)) {
+    pos.x = x0 + dx;
+    pos.z = z0 + dz;
+    return;
+  }
+  const x1 = x0 + dx, z1 = z0 + dz;
+  if (spotFree(x1, z1, y, r, passGlass)) { pos.x = x1; pos.z = z1; return; }
+  if (Math.abs(dx) > 1e-8 && spotFree(x0 + dx, z0, y, r, passGlass)) { pos.x = x0 + dx; return; }
+  if (Math.abs(dz) > 1e-8 && spotFree(x0, z0 + dz, y, r, passGlass)) { pos.z = z0 + dz; }
 }
 const BB_MOVE = 0.6;      
 const BB_HOLD = 1.5;        
@@ -7439,11 +7446,17 @@ class Fighter {
     if (this.isPlayer) { this._bbSpd = spd; this._bbStep = stepD; }
     const nSubDt = Math.min(8, Math.max(1, Math.round(dt / (1 / 60))));
     const nSub = Math.max(stepD > 0.3 ? Math.min(16, Math.ceil(stepD / 0.3)) : 1, nSubDt);
+    const ox = this.pos.x, oz = this.pos.z;
     for (let k = 0; k < nSub; k++) {
       const sx = stepDx / nSub, sz = stepDz / nSub;
       if (ghostWall) { this.pos.x += sx; this.pos.z += sz; continue; }
-      trySlideMove(this.pos, sx, sz, this.y, 0.55);
+      trySlideMove(this.pos, sx, sz, this.y, 0.55, this);
       pushOut(this.pos, 0.55, this.y, this);
+    }
+    if (stepD > 0.001) {
+      const got = Math.hypot(this.pos.x - ox, this.pos.z - oz);
+      if (got < stepD * 0.12) this.runV = 0;
+      else this.runV *= clamp(got / stepD, 0.2, 1);
     }
     if (true) {
     const gY = groundHeightAt(this.pos.x, this.pos.z, this.y, this.grounded ? 0.45 : 0.05);
@@ -13416,14 +13429,21 @@ function netApplySnapshots(dt) {
           hist[hI].x += cx; hist[hI].y += cy; hist[hI].z += cz;
         }
       };
+      const serverTrap = trappedAt(gx, gz, gy);
+      const wantMove = x.moveDir && x.moveDir.lengthSq() > 0.04;
       if (d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) {
-        if (!(trappedAt(gx, gz, gy) && !trappedInGeometry(x))) {
+        if (!serverTrap) {
           shiftHist(gx - x.pos.x, gy - x.y, gz - x.pos.z);
           x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
         }
-      } else {
+      } else if (!serverTrap) {
         if (d > NET_ERR_DEAD) {
-          const k = ((d - NET_ERR_DEAD) / d) * NET_PULL;
+          let k = ((d - NET_ERR_DEAD) / d) * NET_PULL;
+          if (wantMove) {
+            const mlen = Math.hypot(x.moveDir.x, x.moveDir.z) || 1;
+            const against = (ex * x.moveDir.x + ez * x.moveDir.z) / mlen;
+            if (against < 0) k *= 0.12;
+          }
           const cx = ex * k, cz = ez * k;
           if (!trappedAt(x.pos.x + cx, x.pos.z + cz, x.y)) {
             x.pos.x += cx;
@@ -13543,10 +13563,12 @@ function netFeedback(m) {
         }
         shake(clamp(amount * 0.002, 0.08, 0.4));
       }
-      if (!self && by[i] === net.slot) {
+      if (!self) {
         spawnDmgNum(x, amount);
-        world.hitMarkT = 0.18;
-        if (sfx.hitmark) sfx.hitmark();
+        if (by[i] === net.slot) {
+          world.hitMarkT = 0.18;
+          if (sfx.hitmark) sfx.hitmark();
+        }
       }
       n++;
     } else if (dHp < 0 || dSh < 0) {
@@ -14465,7 +14487,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v194';
+const GAME_VERSION = 'v195';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
