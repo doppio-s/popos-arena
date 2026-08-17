@@ -13431,11 +13431,12 @@ function netApplySnapshots(dt) {
       };
       const serverTrap = trappedAt(gx, gz, gy);
       const wantMove = x.moveDir && x.moveDir.lengthSq() > 0.04;
-      if (d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) {
-        if (!serverTrap) {
-          shiftHist(gx - x.pos.x, gy - x.y, gz - x.pos.z);
-          x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
-        }
+      const mlen = wantMove ? Math.hypot(x.moveDir.x, x.moveDir.z) || 1 : 1;
+      const along = wantMove ? (ex * x.moveDir.x + ez * x.moveDir.z) / mlen : 0;
+      const serverBehind = wantMove && along < -0.15;
+      if ((d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) && !serverTrap && !(serverBehind && d < 18)) {
+        shiftHist(gx - x.pos.x, gy - x.y, gz - x.pos.z);
+        x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
       } else if (!serverTrap) {
         if (d > NET_ERR_DEAD) {
           let k = ((d - NET_ERR_DEAD) / d) * NET_PULL;
@@ -13669,12 +13670,13 @@ function startBattle(charId, mapId, seed) {
   hideAstralBeacon();
   warnedAt = -1;
   const roster = arguments[3] || null;
-  const mySlot = clamp(arguments[4] | 0, 0, TOTAL_FIGHTERS - 1);
+  const slotArg = arguments[4];
+  const mySlot = (slotArg === undefined || slotArg === null) ? 0 : (slotArg | 0);
   world.zonePlan = buildZonePlan();   
   world.zone.cx = 0; world.zone.cz = 0;
   const names = [...BOT_NAMES];
   for (let i = 0; i < TOTAL_FIGHTERS; i++) {
-    const isMe = i === mySlot;
+    const isMe = mySlot >= 0 && mySlot < TOTAL_FIGHTERS && i === mySlot;
     const rawId = roster ? roster.chars[i] : (isMe ? charId : randPick(CHAR_ORDER));
     const cid = (typeof rawId === 'string' && CHAR_DEFS[rawId]) ? rawId
       : (isMe && CHAR_DEFS[charId] ? charId : CHAR_ORDER[0]);
@@ -13685,6 +13687,7 @@ function startBattle(charId, mapId, seed) {
     world.fighters.push(f);
     if (isMe) world.player = f;
   }
+  if (!world.player && world.fighters[0]) world.player = world.fighters[0];
   for (const f of world.fighters) {
     f.energy = LV_THRESH[0];
     f.level = 1;
@@ -14487,7 +14490,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v195';
+const GAME_VERSION = 'v196';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14720,7 +14723,8 @@ function animate() {
       if (world.wantDash) net.dash = true;
       if (world.wantVault && world.vaultWin) net.vault = true;
       updateZone(dt);              
-      updatePlayer(dt);            
+      updatePlayer(dt);
+      netSendInput(dt);
       for (const f of world.fighters) f.update(dt);
       recordLagHistory();          
       for (const f of world.fighters) {
@@ -14738,8 +14742,7 @@ function animate() {
       updateHeaven(dt);    
       updateBlurTrail(dt);   
       updateScanMarks(dt);    
-      netApplySnapshots(dt);       
-      netSendInput(dt);
+      netApplySnapshots(dt);
     } else {
       world.matchT += dt;
       updateZone(dt);

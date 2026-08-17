@@ -196,7 +196,9 @@ async function makeRoom(members) {
     names.push('刺客');
   }
   const roster = { chars, names };
-  mod.startBattle(chars[0], map, seed, roster);
+  /* サーバーに「操作している自分」は居ない。席0を isPlayer にすると、
+     その席の人が抜けたあと CPU がキーボード待ちでスポーンに凍る。 */
+  mod.startBattle(chars[0], map, seed, roster, -1);
   /* 人が座っている席だけ netInput を付ける = そこはAIが黙る */
   const room = { id, slot, mod, seed, map, roster, members, t: 0, snapAcc: 0, over: false, endT: 0 };
   members.forEach((m, i) => {
@@ -352,14 +354,25 @@ function closeRoom(room, why) {
 let lastMs = Date.now();
 setInterval(() => {
   const now = Date.now();
-  let dt = (now - lastMs) / 1000;
+  let wall = (now - lastMs) / 1000;
   lastMs = now;
-  if (dt > 0.05) dt = 0.05;                 // 重くなった時は刻みを丸める(本体と同じ考え)
-  globalThis.__advanceClock(dt * 1000);
+  /* ★v196: 重い時に 0.05 で切ると、ゲーム時間が実時間より遅れる。
+     手元は60fpsで歩き、サーバーはスポーン付近のまま → 3mで引き戻される。
+     遅れ分は 0.05秒コマを最大5回まで追いつかせる。 */
+  if (wall > 0.25) wall = 0.25;
+  const step = 1 / TICK_HZ;
+  let n = Math.max(1, Math.round(wall / step));
+  if (n > 5) n = 5;
+  for (let k = 0; k < n; k++) {
+    globalThis.__advanceClock(step * 1000);
+    for (const room of [...rooms.values()]) {
+      globalThis.__rafSlot = room.slot;
+      globalThis.__runRaf(room.slot);
+    }
+  }
+  const dt = step * n;
 
   for (const room of [...rooms.values()]) {
-    globalThis.__rafSlot = room.slot;        // ★v169 #337: 予約の棚は【世界】の名前で引く
-    globalThis.__runRaf(room.slot);          // ★その部屋の1フレームだけ進める
     room.t += dt;
     /* 写しを配る */
     room.snapAcc += dt;
