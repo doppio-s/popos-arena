@@ -4172,23 +4172,29 @@ const SWING_STEER = 5.0;
 const _stCand = [], _stCandD = [];     
 function pushOut(pos, r, y, fighter) {
   const toBreak = [];
-  const boxes = nearBoxes(pos.x, pos.z, _nbPush);
-  for (let i = 0; i < boxes.length; i++) {
-    const b = boxes[i];
-    if (y >= b.h - 0.01) continue;              
-    if (y + 1.65 <= (b.y0 || 0)) continue;      
-    if (b.standable && b.h - y <= stepOverOf(b)) continue; 
-    const dx = pos.x - b.x, dz = pos.z - b.z;
-    const ox = b.hw + r - Math.abs(dx);
-    const oz = b.hd + r - Math.abs(dz);
-    if (ox > 0 && oz > 0) {
-      if (b.glassRef && fighter && (fighter.dashT > 0 || fighter.invulnT > 0 || !fighter.grounded)) {
-        toBreak.push(b.glassRef);               
-        continue;
+  const pad = 0.03;
+  for (let pass = 0; pass < 12; pass++) {
+    let moved = false;
+    const boxes = nearBoxes(pos.x, pos.z, _nbPush);
+    for (let i = 0; i < boxes.length; i++) {
+      const b = boxes[i];
+      if (y >= b.h - 0.01) continue;
+      if (y + 1.65 <= (b.y0 || 0)) continue;
+      if (b.standable && b.h - y <= stepOverOf(b)) continue;
+      const dx = pos.x - b.x, dz = pos.z - b.z;
+      const ox = b.hw + r - Math.abs(dx);
+      const oz = b.hd + r - Math.abs(dz);
+      if (ox > 0 && oz > 0) {
+        if (b.glassRef && fighter && (fighter.dashT > 0 || fighter.invulnT > 0 || !fighter.grounded)) {
+          toBreak.push(b.glassRef);
+          continue;
+        }
+        if (ox < oz) pos.x += (dx >= 0 ? ox : -ox) + pad;
+        else pos.z += (dz >= 0 ? oz : -oz) + pad;
+        moved = true;
       }
-      if (ox < oz) pos.x += (dx >= 0 ? ox : -ox);
-      else pos.z += (dz >= 0 ? oz : -oz);
     }
+    if (!moved) break;
   }
   for (const g of toBreak) breakGlass(g);
   const d = Math.hypot(pos.x, pos.z);
@@ -4200,43 +4206,57 @@ function spotFree(x, z, y, r) {
   const boxes = nearBoxes(x, z, _nbProbe);
   for (let i = 0; i < boxes.length; i++) {
     const b = boxes[i];
-    if (y >= b.h - 0.01) continue;               
-    if (y + 1.65 <= (b.y0 || 0)) continue;       
-    if (b.standable && b.h - y <= stepOverOf(b)) continue; 
-    if (b.glassRef) continue;                     
+    if (y >= b.h - 0.01) continue;
+    if (y + 1.65 <= (b.y0 || 0)) continue;
+    if (b.standable && b.h - y <= stepOverOf(b)) continue;
+    if (b.glassRef) continue;
     if (Math.abs(x - b.x) < b.hw + r && Math.abs(z - b.z) < b.hd + r) return false;
   }
   return true;
 }
-const UNSTUCK_T = 0.45;          
-const UNSTUCK_MAX_R = 8.0;       
+const UNSTUCK_T = 0.08;
+const UNSTUCK_MAX_R = 24.0;
+function trappedAt(x, z, y) {
+  if (!spotFree(x, z, y, 0.5)) return true;
+  const surf = groundHeightAt(x, z, y + 0.6, 0.6);
+  if (Number.isFinite(surf) && surf > y + 0.6) return true;
+  return false;
+}
 function trappedInGeometry(f) {
   if (!f || !f.alive) return false;
   if (f.vaultT >= 0 || f.rollerT >= 0 || f.rollerHidden || f.rollerAiming) return false;
   if (f.diveT > 0 || f.climbT > 0 || f.blinkT >= 0 || f.astral) return false;
   if (typeof inZipper === 'function' && inZipper(f)) return false;
-  if (!spotFree(f.pos.x, f.pos.z, f.y, 0.5)) return true;
-  const surf = groundHeightAt(f.pos.x, f.pos.z, f.y + 0.6, 0.6);
-  if (Number.isFinite(surf) && surf > f.y + 0.6) return true;
-  return false;
+  return trappedAt(f.pos.x, f.pos.z, f.y);
+}
+function tryUnstuckPlace(f, x, z, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(y)) return false;
+  if (Math.hypot(x, z) > WORLD_R - 1) return false;
+  if (trappedAt(x, z, y)) return false;
+  if (!spotFree(x, z, y, 0.55)) return false;
+  f.pos.x = x; f.pos.z = z; f.y = y; f.vy = 0; f.grounded = true;
+  f.knock.set(0, 0, 0);
+  return true;
 }
 function unstickFighter(f) {
-  const surf = groundHeightAt(f.pos.x, f.pos.z, 1e6, 0.6);
-  if (Number.isFinite(surf) && surf > f.y + 0.05 && spotFree(f.pos.x, f.pos.z, surf, 0.55)) {
-    f.y = surf; f.vy = 0; f.grounded = true;
-    return true;
-  }
-  for (let r = 0.6; r <= UNSTUCK_MAX_R + 1e-9; r += 0.6) {
-    for (let k = 0; k < 24; k++) {
-      const a = (k / 24) * Math.PI * 2 + r;      
-      const x = f.pos.x + Math.sin(a) * r, z = f.pos.z + Math.cos(a) * r;
-      if (Math.hypot(x, z) > WORLD_R) continue;
-      const gy = groundHeightAt(x, z, f.y + 2.5, 0.6);
-      if (!spotFree(x, z, gy, 0.55)) continue;
-      f.pos.x = x; f.pos.z = z; f.y = gy; f.vy = 0; f.grounded = true;
-      return true;
+  const x0 = f.pos.x, z0 = f.pos.z, y0 = f.y;
+  const roof = groundHeightAt(x0, z0, 1e6, 0.6);
+  if (tryUnstuckPlace(f, x0, z0, roof)) return true;
+  for (let r = 0.7; r <= UNSTUCK_MAX_R + 1e-9; r += 0.7) {
+    const n = 12 + Math.min(24, Math.floor(r * 2));
+    for (let k = 0; k < n; k++) {
+      const a = (k / n) * Math.PI * 2 + r * 0.17;
+      const x = x0 + Math.sin(a) * r, z = z0 + Math.cos(a) * r;
+      const gy = groundHeightAt(x, z, y0 + 5, 0.6);
+      if (tryUnstuckPlace(f, x, z, gy)) return true;
+      const hi = groundHeightAt(x, z, 1e6, 0.6);
+      if (hi > gy + 0.25 && tryUnstuckPlace(f, x, z, hi)) return true;
     }
   }
+  const zx = (world.zone && Number.isFinite(world.zone.cx)) ? world.zone.cx : 0;
+  const zz = (world.zone && Number.isFinite(world.zone.cz)) ? world.zone.cz : 0;
+  const zg = groundHeightAt(zx, zz, 1e6, 0.6);
+  if (tryUnstuckPlace(f, zx, zz, zg)) return true;
   return false;
 }
 function updateUnstick(f, dt) {
@@ -4245,7 +4265,13 @@ function updateUnstick(f, dt) {
   if (f._trapT < UNSTUCK_T) return false;
   f._trapT = 0;
   const ok = unstickFighter(f);
-  if (ok && f.isPlayer) announce('引っかかりから抜け出した');
+  if (ok && f.isPlayer) {
+    const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
+    if (!f._unstuckSay || now - f._unstuckSay > 2500) {
+      f._unstuckSay = now;
+      announce('引っかかりから抜け出した');
+    }
+  }
   return ok;
 }
 const BB_MOVE = 0.6;      
@@ -13383,27 +13409,39 @@ function netApplySnapshots(dt) {
         }
       };
       if (d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) {
-        shiftHist(gx - x.pos.x, gy - x.y, gz - x.pos.z);
-        x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
+        if (!(trappedAt(gx, gz, gy) && !trappedInGeometry(x))) {
+          shiftHist(gx - x.pos.x, gy - x.y, gz - x.pos.z);
+          x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
+        }
       } else {
         if (d > NET_ERR_DEAD) {
           const k = ((d - NET_ERR_DEAD) / d) * NET_PULL;
           const cx = ex * k, cz = ez * k;
-          x.pos.x += cx;
-          x.pos.z += cz;
-          shiftHist(cx, 0, cz);      
+          if (!trappedAt(x.pos.x + cx, x.pos.z + cz, x.y)) {
+            x.pos.x += cx;
+            x.pos.z += cz;
+            shiftHist(cx, 0, cz);
+          }
         }
         const airborne = !x.grounded || Math.abs(x.vy || 0) > 0.5;
         if (!airborne && dy > NET_ERR_DEAD_Y) {
           const cy = ey * NET_PULL_Y;
-          x.y += cy;
-          shiftHist(0, cy, 0);       
+          if (!trappedAt(x.pos.x, x.pos.z, x.y + cy)) {
+            x.y += cy;
+            shiftHist(0, cy, 0);
+          }
         }
       }
+      if (trappedInGeometry(x)) unstickFighter(x);
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
       const vz = (rb[3] - ra[3]) / (span / 1000);
-      x.pos.x = gx; x.y = gy; x.pos.z = gz;
+      if (!trappedAt(gx, gz, gy)) {
+        x.pos.x = gx; x.y = gy; x.pos.z = gz;
+      } else if (trappedInGeometry(x)) {
+        x.pos.x = gx; x.y = gy; x.pos.z = gz;
+        unstickFighter(x);
+      }
       x.facing = netLerpAngle(ra[4], rb[4], u);
       const fresh = u < 1;
       const dx = fresh ? clamp(vx / 6, -1, 1) : 0;
@@ -14419,7 +14457,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v192';
+const GAME_VERSION = 'v193';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
