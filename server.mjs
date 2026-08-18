@@ -350,6 +350,57 @@ function closeRoom(room, why) {
   console.log(`[部屋] ${room.id} 終了(${why}) — 残り部屋 ${rooms.size} / 空き世界 ${modPool.length}`);
 }
 
+/* ★★★v200: 「押しているのに進まない」瞬間を、審判の側から記録する。
+   ★手元の記録(黒箱)はもう使えない —— v197で位置の決定権がサーバーへ移ったので、
+     手元は「自分がなぜ止まっているか」を知らない。実際、利用者の画面には
+     引っかかりの記録に【まわりに壁なし】と出ていた。壁が無いのは本当で、
+     ただし手元から見た話にすぎない。
+   ★だから審判が持っている物を全部並べる: 出た距離 / 想定 / 体の状態 / 近くの箱。
+     ここで「箱なし・状態なし」と出たら、当たり判定でも技でもない何かが
+     入力を捨てているということになり、探す場所が一段絞れる。 */
+function watchStuck(room, m, dt) {
+  const f = m.fighter;
+  const n = f && f.netInput;
+  if (!f || !n || !f.alive) { m._stuckT = 0; m._sx = undefined; return; }
+  const mag = Math.hypot(n.mx || 0, n.mz || 0);
+  const px = m._sx, pz = m._sz;
+  m._sx = f.pos.x; m._sz = f.pos.z;
+  m._stuckCd = Math.max(0, (m._stuckCd || 0) - dt);
+  if (px === undefined) return;
+  const base = (f.def && f.def.stats && f.def.stats.speed) || 7;
+  const want = mag * base * dt;
+  const got = Math.hypot(f.pos.x - px, f.pos.z - pz);
+  if (mag > 0.35 && want > 0.001 && got < want * 0.2) m._stuckT = (m._stuckT || 0) + dt;
+  else m._stuckT = 0;
+  if (m._stuckT < 0.5 || m._stuckCd > 0) return;
+  m._stuckCd = 6; m._stuckT = 0;
+  const st = [];
+  const on = (c, s) => { if (c) st.push(s); };
+  on(f.stunT > 0, '気絶' + (f.stunT || 0).toFixed(2));
+  on(f.vaultT >= 0, '乗り越え');
+  on(f.ropeT >= 0, 'ロープ');
+  on((f.climbT || 0) > 0, '壁登り');
+  on((f.diveT || 0) > 0, '潜り');
+  on(f.blinkT >= 0, '瞬間移動');
+  on(f.rollerT >= 0 || f.rollerDropT >= 0 || f.rollerAiming, '落下奥義');
+  on(f.swingT >= 0, '殴り');
+  on(!!f.attackHeld, '攻撃押し');
+  on(!!f.standOn, '構え');
+  on(!!f.crouch, 'しゃがみ');
+  on(!f.grounded, '空中');
+  on(!!f.inWater, '水');
+  on(f.knock && f.knock.lengthSq() > 0.001, 'のけぞり');
+  on(f.airBullet && f.airBullet.life > 0, '空気弾');
+  let boxes = [];
+  try { boxes = room.mod.bbBlockers(f, 3) || []; } catch (e) {}
+  console.log(`[止まり] ${m.name || '?'} 席${m.slot + 1} ${room.map}`
+    + ` (${f.pos.x.toFixed(1)}, ${f.pos.z.toFixed(1)}) 高${(f.y || 0).toFixed(2)}`
+    + ` 指${mag.toFixed(2)} 出${got.toFixed(3)}m/想定${want.toFixed(3)}m`
+    + ` 精神${Math.round(f.sp || 0)}`
+    + ` 状態[${st.join(' ') || 'なし'}]`
+    + ` 箱[${boxes.length ? boxes.join(' | ') : 'なし'}]`);
+}
+
 /* ---------- 全体の時計 ---------- */
 let lastMs = Date.now();
 let tickAcc = 0;
@@ -429,6 +480,7 @@ setInterval(() => {
         m.sock.send(JSON.stringify({ t: 'png', k: m.pingK, rtt: Math.round(m.rtt || 0) }));
       }
     }
+    for (const m of room.members) if (m && m.sock.open) watchStuck(room, m, dt);
     /* 誰も居なくなった部屋は畳む */
     if (!room.members.some((m) => m && m.sock.open)) closeRoom(room, '無人');
   }

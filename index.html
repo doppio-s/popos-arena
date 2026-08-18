@@ -13240,8 +13240,9 @@ const NET_LERP_MS = 115;
    ★次が届いた瞬間にまとめて進むので、止まる→飛ぶ の繰り返し = カクつきになる。
      v197で自分の位置を写しだけで描くようにしたぶん、この影響が直に出る。
    ★足りない時間は、直前の速度で少しだけ先を見て埋める。
-     長く延ばすと「止まったのに滑る」になるので、0.09秒までに留める。 */
-const NET_EXTRAP_MS = 90;      
+     ★★v200: 0.09秒は長すぎた。時計を拍に置き換えた(v199)ぶん待ちはほぼ無くなり、
+       残るのは「止まったのに滑る」側の害だけになったので半分に詰めた。 */
+const NET_EXTRAP_MS = 45;      
 /* 写し1枚ぶんのサーバー時間。server.mjs の SNAP_HZ=20 と対。 */
 const NET_BEAT_MS = 50;        
 const NET_SEND_HZ = 30;        
@@ -13435,6 +13436,8 @@ function netSendInput(dt) {
     const ri = rollerAimInput();
     smx = ri.x * ri.mag; smz = ri.z * ri.mag;
   }
+  /* ★v200: サーバーが今どの向きの指示で動かしているか。先読みの可否に使う。 */
+  net.lastMag = Math.hypot(smx, smz);
   net.ws.send(JSON.stringify({
     t: 'in',
     mx: r2(smx), mz: r2(smz),
@@ -13492,7 +13495,16 @@ function netApplySnapshots(dt) {
       /* ★v197: 自分の位置も【サーバーの写しだけ】で決める。
          手元で先に歩いてから座標を寄せ合う作りをやめた —— 差が溜まらないので、
          指を離した時の引き戻しも、壁に見える食い違いも起きない。 */
+      /* ★★v200: 自分については【スティックを倒している間だけ】先を見る。
+         ★倒していない時に先を見ると、止まったあとも進んでから引き戻される ——
+           これが「移動中に滑る」感触の正体。押していないなら進むはずがない、
+           という当たり前の前提を先読みにも入れる。 */
       let px = gx, pz = gz;
+      if (!((net.lastMag || 0) > 0.2)) {
+        const us = Math.min(u, 1);
+        px = ra[1] + (rb[1] - ra[1]) * us;
+        pz = ra[3] + (rb[3] - ra[3]) * us;
+      }
       /* 先を見た位置が壁の中なら、写しの位置で止める。 */
       if (u > 1 && trappedAt(px, pz, gy)) { px = rb[1]; pz = rb[3]; }
       x.pos.x = px; x.y = gy; x.pos.z = pz;
@@ -14520,7 +14532,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v199';
+const GAME_VERSION = 'v200';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
