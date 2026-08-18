@@ -13348,14 +13348,32 @@ function netConnect(charId, name) {
   let ws;
   try { ws = new WebSocket(netUrl()); } catch (e) { netSetStatus('つなげませんでした', String(e)); return null; }
   net.ws = ws;
+  /* ★★★v202: どの合図も【今使っている線から来た物か】を必ず確かめる。
+     ★ここが今回の元凶だった —— close() は頼んだ瞬間に終わらない。
+       入り直すと、前の線の後始末が【新しい線を張った後に】遅れて走り、
+       その中の net.ws = null が新しい線の控えを消してしまう。
+       すると受け取りだけが生き、送る側だけが死ぬ:
+       写しは届くので世界は動いて見えるのに、指の動きも技も
+       一切サーバーへ行かない = その場で足踏み。8月18日11:55の試合が
+       まさにこれで、94秒間ひとつも届いていなかった。 */
+  const mine = () => net.ws === ws;
   ws.onopen = () => {
+    if (!mine()) { try { ws.close(); } catch (e) {} return; }
     ws.send(JSON.stringify({ t: 'join', name: net.name, char: net.char }));
     netSetStatus('待合室に入りました', '8人そろうか、15秒たてば始まります');
   };
-  ws.onmessage = (e) => { let m; try { m = JSON.parse(e.data); } catch (err) { return; } netOnMessage(m); };
-  ws.onerror = () => netSetStatus('サーバーに届きません',
-    'サーバー(node server.mjs)が動いているか、住所が合っているか確かめてください');
+  ws.onmessage = (e) => {
+    if (!mine()) return;
+    let m; try { m = JSON.parse(e.data); } catch (err) { return; }
+    netOnMessage(m);
+  };
+  ws.onerror = () => {
+    if (!mine()) return;
+    netSetStatus('サーバーに届きません',
+      'サーバー(node server.mjs)が動いているか、住所が合っているか確かめてください');
+  };
   ws.onclose = () => {
+    if (!mine()) return;                 // 古い線の最期は、今の線に触らせない
     net.ws = null;
     if (net.on) { netEnd('サーバーとの線が切れました'); }
     else netSetStatus('切れました', '「この名前で入る」でもう一度');
@@ -13363,8 +13381,13 @@ function netConnect(charId, name) {
   return ws;
 }
 function netDisconnect() {
-  if (net.ws) { try { net.ws.close(); } catch (e) {} }
+  const ws = net.ws;
   net.ws = null; net.on = false; net.a = net.b = null; net.slot = -1;
+  if (ws) {
+    /* 先に耳を塞いでから閉じる。遅れて来る後始末に何もさせない。 */
+    ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
+    try { ws.close(); } catch (e) {}
+  }
 }
 function netOnMessage(m) {
   if (!m || !m.t) return;
@@ -13457,7 +13480,16 @@ function netEnd(why) {
   netSetStatus(why, 'もう一度「この名前で入る」を押せば、次の部屋に入れます');
 }
 function netSendInput(dt) {
-  if (!net.on || !net.ws || net.ws.readyState !== 1) return false;
+  if (!net.on) { net.mute = 0; return false; }
+  if (!net.ws || net.ws.readyState !== 1) {
+    /* ★★v202: 送れない状態を【黙って続けさせない】。
+       送れないまま遊ばせると、その場で足踏みするだけの試合になる。
+       原因は上で直したが、二度と静かに壊れないよう見張りを置く。 */
+    net.mute = (net.mute || 0) + dt;
+    if (net.mute > 2) { net.mute = 0; netEnd('手元からサーバーへ届いていません'); }
+    return false;
+  }
+  net.mute = 0;
   net.sendAcc += dt;
   if (net.sendAcc < 1 / NET_SEND_HZ) return false;
   net.sendAcc = 0;
@@ -14577,7 +14609,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v201';
+const GAME_VERSION = 'v202';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
