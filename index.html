@@ -924,7 +924,8 @@ const SHIELD_LV_GAIN = 0;
 const SHIELD_ORB_SMALL = 250, SHIELD_ORB_LARGE = 500;
 const SHIELD_ORB_N = 26;      
 const GROUND_ORB_N = 12;      
-const ROOF_ORB_N = 30;        
+const ROOF_ORB_N = 18;
+const INTERIOR_ORB_N = 10;    /* ★v204: 全部屋に置くとミニマップが緑の格子になる */ 
 const SHIELD_LARGE_RATE = 0.3;  
 const ROLLER_DIRECT = 200,  ROLLER_DIRECT_R = 1.5;    
 const ROLLER_SHOCK  = 1200, ROLLER_SHOCK_R  = 3.2;    
@@ -6264,7 +6265,7 @@ class Fighter {
   }
   takeDamage(amount, fromPos, attacker, opts) {
     if (!this.alive) return;
-    if (net.on) return;
+    if (netRemote()) return;
     if (this.rollerHidden) return;
     const pierce = !!(opts && opts.pierce);
     if (world.timeStop && world.timeStop.movers.includes(attacker) &&
@@ -12030,7 +12031,7 @@ function updateOrbs(dt, only) {
     }
     return updateOrbPickups(dt, only);
   }
-  if (!only && !net.on) {   
+  if (!only && !netRemote()) {   
     for (let i = world.orbRespawn.length - 1; i >= 0; i--) {
       world.orbRespawn[i] -= dt;
       if (world.orbRespawn[i] <= 0) {
@@ -12043,7 +12044,7 @@ function updateOrbs(dt, only) {
   return updateOrbPickups(dt, only);
 }
 function updateOrbPickups(dt, only) {
-  const pickers = net.on ? [] : (only ? (Array.isArray(only) ? only : [only]) : world.fighters);
+  const pickers = netRemote() ? [] : (only ? (Array.isArray(only) ? only : [only]) : world.fighters);
   for (let i = world.orbs.length - 1; i >= 0; i--) {
     const o = world.orbs[i];
     if (!only) { 
@@ -13038,8 +13039,8 @@ function drawMinimap() {
   mmCtx.strokeStyle = 'rgba(255,90,120,.9)';
   mmCtx.lineWidth = 1.6;
   mmCtx.beginPath(); mmCtx.arc(C + world.zone.cx * scale, C + world.zone.cz * scale, world.zone.r * scale, 0, Math.PI * 2); mmCtx.stroke();
-  const pl = world.player;
-  if (pl && pl.def.id === 'kagemitsu' && pl.level >= 3 && world.zonePlan) {
+  const p = world.player;
+  if (p && p.def.id === 'kagemitsu' && p.level >= 3 && world.zonePlan) {
     const nx = zoneNextCircle();
     if (nx) {
       mmCtx.strokeStyle = 'rgba(255,214,106,.85)';
@@ -13051,11 +13052,23 @@ function drawMinimap() {
       mmCtx.setLineDash && mmCtx.setLineDash([]);
     }
   }
-  for (const o of world.orbs) {
+  /* ★v204: 玉は近い物だけ。全部描くとベネチアの部屋が緑の格子になる。 */
+  let orbs = world.orbs || [];
+  if (orbs.length > 22 && p) {
+    orbs = orbs.map((o) => ({ o, d: Math.hypot(o.mesh.position.x - p.pos.x, o.mesh.position.z - p.pos.z) }))
+      .sort((a, b) => a.d - b.d).slice(0, 22).map((x) => x.o);
+  }
+  for (const o of orbs) {
     mmCtx.fillStyle = o.type === 'heal' ? 'rgba(90,255,154,.8)' : 'rgba(143,107,255,.55)';
     mmCtx.fillRect(C + o.mesh.position.x * scale - 1.2, C + o.mesh.position.z * scale - 1.2, 2.4, 2.4);
   }
-  const p = world.player;
+  for (const f of world.fighters) {
+    if (!f || !f.alive || f === p) continue;
+    mmCtx.fillStyle = f.isMob ? 'rgba(255,190,80,.75)' : 'rgba(255,72,96,.95)';
+    mmCtx.beginPath();
+    mmCtx.arc(C + f.pos.x * scale, C + f.pos.z * scale, f.isMob ? 1.5 : 2.5, 0, Math.PI * 2);
+    mmCtx.fill();
+  }
   if (p && p.alive) {
     mmCtx.save();
     mmCtx.translate(C + p.pos.x * scale, C + p.pos.z * scale);
@@ -13300,8 +13313,40 @@ const net = {
   ev: null,                             
   dmgPrev: null,                        
   char: 'takeru', name: '', waiting: false, msg: '', died: false,
-  ping: 0,                              
+  ping: 0,
+  localSim: false,
 };
+/* ★★★v204: 人が1人(残りCPU)なら、判定も移動も手元でやる。
+   サーバー経由にすると演出も操作も全部遅れる。人が2人以上のときだけ審判を使う。 */
+function netRemote() { return !!(net.on && !net.localSim); }
+function netAttachRemoteInputs() {
+  for (let i = 0; i < world.fighters.length; i++) {
+    if (i === net.slot) continue;
+    const f = world.fighters[i];
+    if (!f) continue;
+    f.netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false,
+      crouch: false, jump: false, skill: false, ult: false,
+      dash: false, vault: false, climb: false, skillHeld: false,
+      ax: NaN, ay: NaN, az: NaN };
+  }
+}
+function netDetachRemoteInputs() {
+  for (const f of world.fighters) {
+    if (f && f !== world.player) f.netInput = null;
+  }
+}
+function netApplyHumans(n) {
+  const want = (n | 0) === 1;
+  if (want === !!net.localSim) return;
+  net.localSim = want;
+  if (want) {
+    netDetachRemoteInputs();
+    announce('1人になったので手元で動かします');
+  } else {
+    netAttachRemoteInputs();
+    announce('対戦相手が入ったので審判を使います');
+  }
+}
 /* ★★★v203: 手元の先読みと、サーバーの写しの照らし合わせ。
    ★肝は【較べる相手】。指示には番号を振って送り、サーバーは
      「何番まで反映したか」を返す。手元はその番号の時の自分の位置を覚えていて、
@@ -13444,7 +13489,7 @@ function netConnect(charId, name) {
 }
 function netDisconnect() {
   const ws = net.ws;
-  net.ws = null; net.on = false; net.a = net.b = null; net.slot = -1;
+  net.ws = null; net.on = false; net.localSim = false; net.a = net.b = null; net.slot = -1;
   if (ws) {
     /* 先に耳を塞いでから閉じる。遅れて来る後始末に何もさせない。 */
     ws.onopen = ws.onmessage = ws.onerror = ws.onclose = null;
@@ -13464,6 +13509,7 @@ function netOnMessage(m) {
   } else if (m.t === 'start') {
     netStart(m);
   } else if (m.t === 'snap') {
+    if (net.localSim) return;
     net.a = net.b; net.aT = net.bT;
     net.b = m; net.bT = performance.now();
     diagOnSnap(net.bT);
@@ -13490,17 +13536,27 @@ function netOnMessage(m) {
     if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k }));
     net.ping = m.rtt || 0;
     const badge = $('netBadge');
-    if (badge && net.on) badge.textContent = `オンライン ${net.room} / 席${net.slot + 1} / ${net.ping}ms`;
+    if (badge && net.on) {
+      badge.textContent = net.localSim
+        ? `オンライン ${net.room} / CPU戦 / ${net.ping}ms`
+        : `オンライン ${net.room} / 席${net.slot + 1} / ${net.ping}ms`;
+    }
   } else if (m.t === 'orbs') {
+    if (net.localSim) return;
     applyOrbSnapshot(m.o);
     if (m.gl) applyGlassSnapshot(m.gl);
     if (m.en) applyEnergySnapshot(m.en);
+  } else if (m.t === 'humans') {
+    netApplyHumans(m.n | 0);
   } else if (m.t === 'end') {
+    if (net.localSim) return;
     netEnd(m.why === '決着' ? '試合が終わりました' : (m.why || '試合が終わりました'));
   }
 }
 function netStart(m) {
   net.on = true; net.waiting = false;
+  /* ★v204: 人がちょうど1人の時だけ手元で動かす。人数が無い古い合図では審判のまま。 */
+  net.localSim = (m.humans | 0) === 1;
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   /* ★v199: 写しの棚と再生の時計を毎試合たたむ。持ち越すと最初の一瞬だけ飛ぶ。 */
@@ -13517,20 +13573,22 @@ function netStart(m) {
   $('resultScreen').classList.add('hidden');
   unmountAd('result');  
   const badge = $('netBadge');
-  if (badge) { badge.classList.remove('hidden'); badge.textContent = `オンライン ${m.room} / 席${net.slot + 1}`; }
-  startBattle(m.roster.chars[net.slot], m.map, m.seed, m.roster, net.slot);
-  for (let i = 0; i < world.fighters.length; i++) {
-    if (i === net.slot) continue;
-    world.fighters[i].netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false,
-      crouch: false, jump: false, skill: false, ult: false,
-      dash: false, vault: false, climb: false, skillHeld: false,
-      ax: NaN, ay: NaN, az: NaN };   
+  if (badge) {
+    badge.classList.remove('hidden');
+    badge.textContent = net.localSim
+      ? `オンライン ${m.room} / CPU戦`
+      : `オンライン ${m.room} / 席${net.slot + 1}`;
   }
-  announce(`オンライン開始! ${m.room} / ${net.slot + 1}番`);
+  startBattle(m.roster.chars[net.slot], m.map, m.seed, m.roster, net.slot);
+  /* ★v204: 1人試合ではCPUに netInput を付けない。付けるとAIが黙り、出現地点に凍る。 */
+  if (!net.localSim) netAttachRemoteInputs();
+  announce(net.localSim
+    ? `オンライン開始! CPU戦 (${m.room})`
+    : `オンライン開始! ${m.room} / ${net.slot + 1}番`);
 }
 function netEnd(why) {
   const wasOn = net.on;
-  net.on = false; net.a = net.b = null; net.won = false; net.died = false;
+  net.on = false; net.localSim = false; net.a = net.b = null; net.won = false; net.died = false;
   { const rs = $('resultScreen'); if (rs && rs.classList) rs.classList.add('hidden'); }
   { const rb = $('retryBtn'); if (rb && rb.classList) rb.classList.remove('hidden'); }
   unmountAd('result');
@@ -13545,7 +13603,7 @@ function netEnd(why) {
   netSetStatus(why, 'もう一度「この名前で入る」を押せば、次の部屋に入れます');
 }
 function netSendInput(dt) {
-  if (!net.on) { net.mute = 0; return false; }
+  if (!netRemote()) { net.mute = 0; return false; }
   if (!net.ws || net.ws.readyState !== 1) {
     /* ★★v202: 送れない状態を【黙って続けさせない】。
        送れないまま遊ばせると、その場で足踏みするだけの試合になる。
@@ -13917,7 +13975,7 @@ function startBattle(charId, mapId, seed) {
   for (let i = 0; i < GROUND_ORB_N; i++) {
     spawnWorldOrb(Math.random() < 0.35 ? 'heal' : 'shield');
   }
-  for (const s of town.interiorSpots) {
+  for (const s of [...town.interiorSpots].sort(() => Math.random() - 0.5).slice(0, INTERIOR_ORB_N)) {
     spawnWorldOrb(Math.random() < 0.5 ? 'heal' : 'shield', s.x + rand(-1, 1), s.z + rand(-1, 1), s.y || 0);
   }
   const roofPick = [...town.roofSpots].sort(() => Math.random() - 0.5).slice(0, ROOF_ORB_N);
@@ -14698,7 +14756,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v203';
+const GAME_VERSION = 'v204';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14869,6 +14927,7 @@ $('retryBtn').addEventListener('click', () => {
 });
 $('toTitleBtn').addEventListener('click', () => {
   sfx.uiTap();
+  if (net.on) { try { netDisconnect(); } catch (e) {} net.localSim = false; }
   cleanupBattle();
   $('resultScreen').classList.add('hidden');
   unmountAd('result');  
@@ -14905,7 +14964,7 @@ function animate() {
     bbUpdate(world.player, dt);   
     if (world.freezeT > 0) {
       world.freezeT -= dt;
-      if (net.on) { netApplySnapshots(dt); netSendInput(dt); }
+      if (netRemote()) { netApplySnapshots(dt); netSendInput(dt); }
     } else if (world.timeStop) {
       const ts = world.timeStop;
       const h = ts.holder;
@@ -14923,8 +14982,8 @@ function animate() {
       if (world.tsTickAcc > 0.55) { world.tsTickAcc = 0; sfx.tsTick(); }
       ts.t -= dt;
       if (ts.t <= 0 || !h.alive) endTimeStop();
-      if (net.on) { netApplySnapshots(dt); netSendInput(dt); }
-    } else if (net.on) {
+      if (netRemote()) { netApplySnapshots(dt); netSendInput(dt); }
+    } else if (netRemote()) {
       if (world.wantJump) net.jump = true;
       if (world.wantSkill) net.skill = true;
       if (world.wantUlt) net.ult = true;
@@ -15049,6 +15108,7 @@ if (typeof location !== 'undefined' && /(?:^|[?&])probe=1(?:&|$)/.test(location.
         ver: GAME_VERSION,
         running: !!world.running,
         netOn: !!net.on,
+        localSim: !!net.localSim,
         slot: net.slot,
         ping: Math.round(net.ping || 0),
         msg: (($('netStatus') || {}).textContent || '').slice(0, 60),

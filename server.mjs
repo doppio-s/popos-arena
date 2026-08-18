@@ -218,7 +218,8 @@ async function makeRoom(members) {
       dash: false, vault: false, climb: false, skillHeld: false,
       ax: NaN, ay: NaN, az: NaN, q: 0 };
     m.fighter = f;
-    m.sock.send(JSON.stringify({ t: 'start', room: id, seed, map, slot: i, roster }));
+    m.sock.send(JSON.stringify({ t: 'start', room: id, seed, map, slot: i, roster,
+      humans: members.filter(Boolean).length }));
   });
   rooms.set(id, room);
   console.log(`[部屋] ${id} 開始 — 人${members.filter(Boolean).length}人 / CPU${ROOM_MAX - members.filter(Boolean).length}人 / ${map} / 種${seed}`);
@@ -303,10 +304,15 @@ function seatInto(room, seat, c) {
     jump: false, skill: false, ult: false,
     dash: false, vault: false, climb: false, skillHeld: false,
     ax: NaN, ay: NaN, az: NaN, q: 0 };
+  const humans = room.members.filter((x) => x && x.sock && x.sock.open).length;
   c.sock.send(JSON.stringify({ t: 'start', room: room.id, seed: room.seed,
-    map: room.map, slot: seat, roster: room.roster }));
+    map: room.map, slot: seat, roster: room.roster, humans }));
+  for (const m of room.members) {
+    if (!m || m === c || !m.sock || !m.sock.open) continue;
+    try { m.sock.send(JSON.stringify({ t: 'humans', n: humans })); } catch (e) {}
+  }
   console.log(`[部屋] ${room.id} に途中参加 — 席${seat + 1} (${c.name})`
-    + ` → (${f.pos.x.toFixed(0)}, ${f.pos.z.toFixed(0)}) 体力満タン`);
+    + ` → (${f.pos.x.toFixed(0)}, ${f.pos.z.toFixed(0)}) 体力満タン / 人${humans}`);
   return true;
 }
 function findOpenSeat() {
@@ -502,8 +508,15 @@ setInterval(() => {
         for (const m of room.members) if (m && m.sock.open) m.sock.send(om);
       } catch (e) { /* 世界が入れ替わる瞬間などは黙って見送る */ }
     }
-    /* 終わったか(全滅 or 制限時間) */
-    if (!room.over && (room.mod.world.ended || room.t > 600)) { room.over = true; room.endT = 0; }
+    /* 終わったか(全滅 or 制限時間)
+       ★v204: 人が1人の部屋は手元が試合を動かしている。
+         サーバー側の体は入力が来ないので安置で死に、審判が「決着」にして
+         数秒で部屋を畳む → 遊んでいる最中に線が切れる。
+         1人の間は審判の決着では畳まない。無人・10分・人が2人以上の決着だけ。 */
+    const liveH = room.members.filter((m) => m && m.sock && m.sock.open).length;
+    if (!room.over && (room.t > 600 || (liveH >= 2 && room.mod.world.ended))) {
+      room.over = true; room.endT = 0;
+    }
     if (room.over) { room.endT += dt; if (room.endT > 3) closeRoom(room, room.mod.world.ended ? '決着' : '時間切れ'); }
     /* ★v117 #280: 往復の時間を測る。返事(pog)が来た時に lag を置き直す */
     room.pingAcc = (room.pingAcc || 0) + dt;
@@ -684,7 +697,14 @@ attachWs(server, {
     if (!c) return;
     const i = waiting.indexOf(c); if (i >= 0) waiting.splice(i, 1);
     if (c.fighter) c.fighter.netInput = null;      // 抜けた席はCPUが引き継ぐ
-    if (c.room) { const j = c.room.members.indexOf(c); if (j >= 0) c.room.members[j] = null; }
+    if (c.room) {
+      const j = c.room.members.indexOf(c); if (j >= 0) c.room.members[j] = null;
+      const humans = c.room.members.filter((x) => x && x.sock && x.sock.open).length;
+      for (const m of c.room.members) {
+        if (!m || !m.sock || !m.sock.open) continue;
+        try { m.sock.send(JSON.stringify({ t: 'humans', n: humans })); } catch (e) {}
+      }
+    }
   },
 });
 
