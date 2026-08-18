@@ -13242,6 +13242,8 @@ const NET_LERP_MS = 115;
    ★足りない時間は、直前の速度で少しだけ先を見て埋める。
      長く延ばすと「止まったのに滑る」になるので、0.09秒までに留める。 */
 const NET_EXTRAP_MS = 90;      
+/* 写し1枚ぶんのサーバー時間。server.mjs の SNAP_HZ=20 と対。 */
+const NET_BEAT_MS = 50;        
 const NET_SEND_HZ = 30;        
 const NET_SNAP_DIST = 3.0;     
 const NET_PULL = 0.18;         
@@ -13349,6 +13351,18 @@ function netOnMessage(m) {
     net.b = m; net.bT = performance.now();
     diagOnSnap(net.bT);
     if (!net.a) { net.a = m; net.aT = net.bT - 1000 / NET_TICK_HZ; net.clock = net.aT; }
+    /* ★★v199: 届いた写しを【サーバーの拍】に並べて棚に積む。
+       ★到着時刻(net.aT/bT)を再生の目盛りに使うと、届くのが61msの回は遅く、
+         48msの回は速く再生される —— 走っている間ずっと速度が波打つ。
+         これが「カクつき」の正体だった(実測で速度が±60%揺れていた)。
+       ★写しは【サーバーの50ms】ごとに1枚。WebSocketは順番も到着も保証されるので、
+         枚数を数えれば、到着の揺れに影響されない目盛りが手元で作れる。
+       ★2枚だけ持つと遅らせは最大50msしか取れない。棚にして、
+         遅らせを揺れより大きく取れるようにする。 */
+    net.bBeat = (net.bBeat || 0) + NET_BEAT_MS;
+    const q = net.q || (net.q = []);
+    q.push({ s: m, beat: net.bBeat });
+    while (q.length > 24) q.shift();
     if (m.cut) world.freezeT = Math.max(world.freezeT, 1000 / NET_TICK_HZ / 1000 + 0.03);
     netFeedback(m);
   } else if (m.t === 'png') {
@@ -13368,7 +13382,8 @@ function netStart(m) {
   net.on = true; net.waiting = false;
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
-  net._hist = [];   
+  /* ★v199: 写しの棚と再生の時計を毎試合たたむ。持ち越すと最初の一瞬だけ飛ぶ。 */
+  net.q = []; net.bBeat = 0; net.play = undefined;
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -13435,15 +13450,25 @@ function netSendInput(dt) {
 }
 function netApplySnapshots(dt) {
   if (!net.on || !net.b) return 0;
-  const nowMs = performance.now();
-  const target = nowMs - NET_LERP_MS;
-  const span = Math.max(1, net.bT - net.aT);
-  const uRaw = (target - net.aT) / span;
+  const q = net.q;
+  if (!q || q.length < 2) return 0;
+  /* ★★v199: 再生はサーバーの拍の上を、実時間で等速に進む。
+     ★遅れ具合は【位置を飛ばして】ではなく【進む速さのごく僅かな加減】で直す。
+       飛ばして合わせると、そこで必ず一度カクつく —— それを避けるのが目的。 */
+  const want = net.bBeat - NET_LERP_MS;         // 目標: 最新の拍より一定だけ後ろ
+  if (net.play === undefined || Math.abs(want - net.play) > 600) net.play = want;
+  const rate = clamp(1 + (want - net.play) / 500, 0.9, 1.1);
+  net.play += dt * 1000 * rate;
+  /* 再生位置をまたぐ2枚を選ぶ */
+  let k = q.length - 2;
+  for (let i = 0; i < q.length - 1; i++) { if (net.play < q[i + 1].beat) { k = i; break; } }
+  const A = q[k].s, B = q[k + 1].s;
+  const span = NET_BEAT_MS;
+  const uRaw = (net.play - q[k].beat) / span;
   if (uRaw > 1) diag.starved++;
   const u = clamp(uRaw, 0, 1 + NET_EXTRAP_MS / span);
   /* 高さは先を見ない。床をすり抜けたり浮いたりするほうが目立つ。 */
   const uy = Math.min(u, 1);
-  const A = net.a, B = net.b;
   const rowsA = {}, rowsB = {};
   for (const r of A.f) rowsA[r[0]] = r;
   for (const r of B.f) rowsB[r[0]] = r;
@@ -13504,14 +13529,8 @@ function netApplySnapshots(dt) {
     n++;
   }
   if (B.z) { world.zone.cx = B.z[0]; world.zone.cz = B.z[1]; world.zone.r = B.z[2]; }
-  {
-    const me2 = world.fighters[net.slot];
-    if (me2) {
-      const hist = net._hist || (net._hist = []);
-      hist.push({ t: nowMs, x: me2.pos.x, y: me2.y, z: me2.pos.z });
-      while (hist.length && hist[0].t < nowMs - 1500) hist.shift();
-    }
-  }
+  /* ★v199: 自分の過去の位置を溜めていた棚は撤去。
+     v196までの「手元で歩いた履歴と写しを突き合わせる」処理だけが読んでいた。 */
   world.matchT = B.mt;
   netCheckOutcome();
   return n;
@@ -14501,7 +14520,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v198';
+const GAME_VERSION = 'v199';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
