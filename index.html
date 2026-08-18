@@ -7444,6 +7444,9 @@ class Fighter {
     const ghostWall = (this.diveT > 0 || inZipper(this));
     const stepD = Math.hypot(stepDx, stepDz);
     if (this.isPlayer) { this._bbSpd = spd; this._bbStep = stepD; }
+    /* オンラインの自分は【位置をサーバーから受け取る】。手元で先に歩かせると、
+       サーバーの体との差が溜まり、指を離した瞬間に引き戻される。 */
+    if (!netFollowsServer(this)) {
     const nSubDt = Math.min(8, Math.max(1, Math.round(dt / (1 / 60))));
     const nSub = Math.max(stepD > 0.3 ? Math.min(16, Math.ceil(stepD / 0.3)) : 1, nSubDt);
     const ox = this.pos.x, oz = this.pos.z;
@@ -7458,7 +7461,6 @@ class Fighter {
       if (got < stepD * 0.12) this.runV = 0;
       else this.runV *= clamp(got / stepD, 0.2, 1);
     }
-    if (true) {
     const gY = groundHeightAt(this.pos.x, this.pos.z, this.y, this.grounded ? 0.45 : 0.05);
     if (this.grounded) {
       if (this.y > gY + 0.55) {
@@ -7505,7 +7507,7 @@ class Fighter {
     if (this.vaultT >= 0) updateVault(this, dt);
     if (this.ropeT >= 0) updateStoneHook(this, dt);
     if (this.blinkT >= 0) updateBlink(this, dt);
-    updateUnstick(this, dt);
+    if (!netFollowsServer(this)) updateUnstick(this, dt);
     this.updateAstral(dt);
     if (!this.alive) return;
     this.animate(dt);
@@ -13229,7 +13231,11 @@ function applySnapshot(s) {
   return n;
 }
 function snapshotBytes(s) { return JSON.stringify(s || snapshotWorld()).length; }
-const NET_LERP_MS = 60;        
+/* ★v197: 写しは 20回/秒 = 50ms 間隔。遅らせを 60ms しか取らないと、
+   1回でも到着が遅れた瞬間に補間が終端に張り付き、【止まって追いつく】を繰り返す
+   (実測: 平均5.8m/s に対しばらつき3.6 = 速度が倍半分に揺れていた)。
+   2回ぶん + 余白 まで遅らせると、到着の揺れを吸収できる。 */
+const NET_LERP_MS = 115;       
 const NET_SEND_HZ = 30;        
 const NET_SNAP_DIST = 3.0;     
 const NET_PULL = 0.18;         
@@ -13248,6 +13254,8 @@ const net = {
   char: 'takeru', name: '', waiting: false, msg: '', died: false,
   ping: 0,                              
 };
+/* オンライン中の自分。位置と接地はサーバーの写しだけで決まる。 */
+function netFollowsServer(f) { return !!(net.on && f && f.isPlayer); }
 function netUrl() {
   const L = (typeof location !== 'undefined' && location) ? location : {};
   const proto = L.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -13412,56 +13420,12 @@ function netApplySnapshots(dt) {
     const gy = ra[2] + (rb[2] - ra[2]) * u;
     const gz = ra[3] + (rb[3] - ra[3]) * u;
     if (i === net.slot) {
-      const lagMs = (net.ping || 0);
-      const ht = target - lagMs;
-      const hist = net._hist || (net._hist = []);
-      let hp = null;
-      for (let hI = hist.length - 1; hI >= 0; hI--) { if (hist[hI].t <= ht) { hp = hist[hI]; break; } }
-      if (!hp && hist.length) hp = hist[0];
-      const refX = hp ? hp.x : x.pos.x;
-      const refY = hp ? hp.y : x.y;
-      const refZ = hp ? hp.z : x.pos.z;
-      const ex = gx - refX, ey = gy - refY, ez = gz - refZ;
-      const d = Math.hypot(ex, ez);
-      const dy = Math.abs(ey);
-      const shiftHist = (cx, cy, cz) => {
-        for (let hI = 0; hI < hist.length; hI++) {
-          hist[hI].x += cx; hist[hI].y += cy; hist[hI].z += cz;
-        }
-      };
-      const serverTrap = trappedAt(gx, gz, gy);
-      const wantMove = x.moveDir && x.moveDir.lengthSq() > 0.04;
-      const mlen = wantMove ? Math.hypot(x.moveDir.x, x.moveDir.z) || 1 : 1;
-      const along = wantMove ? (ex * x.moveDir.x + ez * x.moveDir.z) / mlen : 0;
-      const serverBehind = wantMove && along < -0.15;
-      if ((d > NET_SNAP_DIST || dy > NET_SNAP_DIST_Y) && !serverTrap && !(serverBehind && d < 18)) {
-        shiftHist(gx - x.pos.x, gy - x.y, gz - x.pos.z);
-        x.pos.x = gx; x.pos.z = gz; x.y = gy; x.vy = 0;
-      } else if (!serverTrap) {
-        if (d > NET_ERR_DEAD) {
-          let k = ((d - NET_ERR_DEAD) / d) * NET_PULL;
-          if (wantMove) {
-            const mlen = Math.hypot(x.moveDir.x, x.moveDir.z) || 1;
-            const against = (ex * x.moveDir.x + ez * x.moveDir.z) / mlen;
-            if (against < 0) k *= 0.12;
-          }
-          const cx = ex * k, cz = ez * k;
-          if (!trappedAt(x.pos.x + cx, x.pos.z + cz, x.y)) {
-            x.pos.x += cx;
-            x.pos.z += cz;
-            shiftHist(cx, 0, cz);
-          }
-        }
-        const airborne = !x.grounded || Math.abs(x.vy || 0) > 0.5;
-        if (!airborne && dy > NET_ERR_DEAD_Y) {
-          const cy = ey * NET_PULL_Y;
-          if (!trappedAt(x.pos.x, x.pos.z, x.y + cy)) {
-            x.y += cy;
-            shiftHist(0, cy, 0);
-          }
-        }
-      }
-      if (trappedInGeometry(x)) unstickFighter(x);
+      /* ★v197: 自分の位置も【サーバーの写しだけ】で決める。
+         手元で先に歩いてから座標を寄せ合う作りをやめた —— 差が溜まらないので、
+         指を離した時の引き戻しも、壁に見える食い違いも起きない。 */
+      x.pos.x = gx; x.y = gy; x.pos.z = gz;
+      x.vy = 0;
+      x.grounded = !!(fl & NET_F_GROUND);
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
       const vz = (rb[3] - ra[3]) / (span / 1000);
@@ -14490,7 +14454,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v196';
+const GAME_VERSION = 'v197';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14806,6 +14770,35 @@ function animate() {
   renderer.render(scene, camera);
 }
 animate();
+/* ★v197: 自動検査の口。?probe=1 を付けた時だけ生える。
+   ★これが無いと、直ったかどうかを人が遊んで目で見るしかない ——
+     引き戻しは「離した後に戻る」現象なので、数字で追わないと再現の確認ができない。
+   ★普通に遊ぶ人には生えない。判定はサーバーが持っているので、
+     ここから読めるのは【手元が今どこを描いているか】だけ。 */
+if (typeof location !== 'undefined' && /(?:^|[?&])probe=1(?:&|$)/.test(location.search || '')) {
+  window.__probe = {
+    ver: GAME_VERSION,
+    join(name) { netConnect(selectedChar || 'takeru', name || 'probe'); },
+    key(code, down) { world.keys[code] = !!down; },
+    state() {
+      const p = world.player;
+      return {
+        ver: GAME_VERSION,
+        running: !!world.running,
+        netOn: !!net.on,
+        slot: net.slot,
+        ping: Math.round(net.ping || 0),
+        msg: (($('netStatus') || {}).textContent || '').slice(0, 60),
+        x: p ? +p.pos.x.toFixed(3) : null,
+        y: p ? +p.y.toFixed(3) : null,
+        z: p ? +p.pos.z.toFixed(3) : null,
+        hp: p ? Math.round(p.hp) : null,
+        alive: p ? !!p.alive : null,
+        gap: p ? bbGap(p) : null,
+      };
+    },
+  };
+}
 //__TEST_EXPORT__
 </script>
 </body>
