@@ -565,6 +565,18 @@ attachWs(server, {
          ★範囲は広めに取って、体からの距離の制限は index.html 側(AIM_ORIGIN_MAX)で
            掛ける —— "どこまで許すか"の判断は世界の側に1つだけ置く。 */
       n.ax = fin(m.ax, -600, 600); n.ay = fin(m.ay, -100, 400); n.az = fin(m.az, -600, 600);
+    } else if (m.t === 'diag') {
+      /* ★★v198: 遊んでいる人の手元の実測値を記録に残す。
+         ★「カクつく」の一言では、絵が重いのか写しが遅れているのかが分からない。
+           fps が低ければ絵の話、g90/gmax が大きいか stv(待ち時間の割合)が
+           高ければ通信の話 —— 直す場所が正反対になる。
+         ★記録は1人3秒に1行。名前と席だけで、位置や操作は残さない。 */
+      const num = (v, hi) => { const x = +v; return Number.isFinite(x) ? Math.min(hi, Math.max(0, Math.round(x))) : -1; };
+      console.log(`[手元] ${c.name || '?'} 席${c.slot + 1}`
+        + ` fps${num(m.fps, 500)}`
+        + ` 写し中央${num(m.g50, 9999)}ms/9割${num(m.g90, 9999)}ms/最大${num(m.gmax, 99999)}ms`
+        + ` 待ち${num(m.stv, 100)}%`
+        + ` 往復${num(m.rtt, 99999)}ms`);
     } else if (m.t === 'pog') {
       /* ★v117 #280: 返事が返ってきた。★自分が送った番号(k)の返事だけを見る ——
          見ないと、古い返事や作った返事で遅れをいくらでも盛れる。 */

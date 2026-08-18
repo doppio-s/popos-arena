@@ -13236,6 +13236,12 @@ function snapshotBytes(s) { return JSON.stringify(s || snapshotWorld()).length; 
    (実測: 平均5.8m/s に対しばらつき3.6 = 速度が倍半分に揺れていた)。
    2回ぶん + 余白 まで遅らせると、到着の揺れを吸収できる。 */
 const NET_LERP_MS = 115;       
+/* ★★v198: 写しが遅れて届いた時、補間が終端に張り付くと【その場で止まる】。
+   ★次が届いた瞬間にまとめて進むので、止まる→飛ぶ の繰り返し = カクつきになる。
+     v197で自分の位置を写しだけで描くようにしたぶん、この影響が直に出る。
+   ★足りない時間は、直前の速度で少しだけ先を見て埋める。
+     長く延ばすと「止まったのに滑る」になるので、0.09秒までに留める。 */
+const NET_EXTRAP_MS = 90;      
 const NET_SEND_HZ = 30;        
 const NET_SNAP_DIST = 3.0;     
 const NET_PULL = 0.18;         
@@ -13256,6 +13262,39 @@ const net = {
 };
 /* オンライン中の自分。位置と接地はサーバーの写しだけで決まる。 */
 function netFollowsServer(f) { return !!(net.on && f && f.isPlayer); }
+
+/* ★★v198: 遊んでいる人の手元の実測値を、サーバーの記録に流す。
+   ★これが無いと「カクつく」の原因が【描画が追いつかない】のか
+     【写しが遅れて届く】のかを切り分けられない —— 対処が正反対になる。
+     描画なら絵を軽くする話、写しなら通信の待ち方を変える話。
+   ★送るのは数字だけ(3秒に1通、約100バイト)。誰が何をしたかは入れない。 */
+const diag = { snapGaps: [], lastSnapT: 0, frames: 0, starved: 0, since: 0 };
+function diagOnSnap(t) {
+  if (diag.lastSnapT) {
+    diag.snapGaps.push(t - diag.lastSnapT);
+    if (diag.snapGaps.length > 80) diag.snapGaps.shift();
+  }
+  diag.lastSnapT = t;
+}
+function diagTick(dt) {
+  if (!net.on || !net.ws || net.ws.readyState !== 1) { diag.since = 0; diag.frames = 0; return; }
+  diag.frames++;
+  diag.since += dt;
+  if (diag.since < 3) return;
+  const g = [...diag.snapGaps].sort((a, b) => a - b);
+  const at = (p) => (g.length ? Math.round(g[Math.min(g.length - 1, Math.floor(g.length * p))]) : 0);
+  net.ws.send(JSON.stringify({
+    t: 'diag',
+    fps: Math.round(diag.frames / diag.since),
+    /* 写しの到着間隔。狙いは 50ms 前後。max が大きいほど「止まって追いつく」 */
+    g50: at(0.5), g90: at(0.9), gmax: at(1),
+    /* 補間が終端に張り付いた割合 = 手元が【次の写しを待って止まっていた】割合 */
+    stv: Math.round((diag.starved / Math.max(1, diag.frames)) * 100),
+    rtt: Math.round(net.ping || 0),
+  }));
+  diag.frames = 0; diag.starved = 0; diag.since = 0;
+  diag.snapGaps.length = 0;
+}
 function netUrl() {
   const L = (typeof location !== 'undefined' && location) ? location : {};
   const proto = L.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -13308,6 +13347,7 @@ function netOnMessage(m) {
   } else if (m.t === 'snap') {
     net.a = net.b; net.aT = net.bT;
     net.b = m; net.bT = performance.now();
+    diagOnSnap(net.bT);
     if (!net.a) { net.a = m; net.aT = net.bT - 1000 / NET_TICK_HZ; net.clock = net.aT; }
     if (m.cut) world.freezeT = Math.max(world.freezeT, 1000 / NET_TICK_HZ / 1000 + 0.03);
     netFeedback(m);
@@ -13398,7 +13438,11 @@ function netApplySnapshots(dt) {
   const nowMs = performance.now();
   const target = nowMs - NET_LERP_MS;
   const span = Math.max(1, net.bT - net.aT);
-  const u = clamp((target - net.aT) / span, 0, 1);
+  const uRaw = (target - net.aT) / span;
+  if (uRaw > 1) diag.starved++;
+  const u = clamp(uRaw, 0, 1 + NET_EXTRAP_MS / span);
+  /* 高さは先を見ない。床をすり抜けたり浮いたりするほうが目立つ。 */
+  const uy = Math.min(u, 1);
   const A = net.a, B = net.b;
   const rowsA = {}, rowsB = {};
   for (const r of A.f) rowsA[r[0]] = r;
@@ -13417,13 +13461,16 @@ function netApplySnapshots(dt) {
       x.grounded = !!(fl & NET_F_GROUND);
     }
     const gx = ra[1] + (rb[1] - ra[1]) * u;
-    const gy = ra[2] + (rb[2] - ra[2]) * u;
+    const gy = ra[2] + (rb[2] - ra[2]) * uy;
     const gz = ra[3] + (rb[3] - ra[3]) * u;
     if (i === net.slot) {
       /* ★v197: 自分の位置も【サーバーの写しだけ】で決める。
          手元で先に歩いてから座標を寄せ合う作りをやめた —— 差が溜まらないので、
          指を離した時の引き戻しも、壁に見える食い違いも起きない。 */
-      x.pos.x = gx; x.y = gy; x.pos.z = gz;
+      let px = gx, pz = gz;
+      /* 先を見た位置が壁の中なら、写しの位置で止める。 */
+      if (u > 1 && trappedAt(px, pz, gy)) { px = rb[1]; pz = rb[3]; }
+      x.pos.x = px; x.y = gy; x.pos.z = pz;
       x.vy = 0;
       x.grounded = !!(fl & NET_F_GROUND);
     } else {
@@ -14454,7 +14501,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v197';
+const GAME_VERSION = 'v198';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14764,6 +14811,7 @@ function animate() {
     const so = $('seaOverlay');
     if (so) so.classList.toggle('on', world.running && camInSea(camera));
   }
+  diagTick(rawDt);
   crimsonSoloView();      
   updateSunShadow();      
   cullFarGlass();         
