@@ -7453,9 +7453,14 @@ class Fighter {
     const ghostWall = (this.diveT > 0 || inZipper(this));
     const stepD = Math.hypot(stepDx, stepDz);
     if (this.isPlayer) { this._bbSpd = spd; this._bbStep = stepD; }
-    /* オンラインの自分は【位置をサーバーから受け取る】。手元で先に歩かせると、
-       サーバーの体との差が溜まり、指を離した瞬間に引き戻される。 */
-    if (!netFollowsServer(this)) {
+    /* ★★★v203: オンラインでも【自分は手元で先に動かす】。
+       ★v197〜v202 はサーバーの写しだけで自分を動かしていた。引き戻しは消えたが、
+         代わりに押してから見えるまで往復130ms+写しの遅らせ115ms = 約0.25秒かかり、
+         操作感が丸ごと失われていた。
+       ★v195/196 が引き戻されたのは先読みのせいではなく、較べ方のせい ——
+         往復時間ぶん必ず進んでいる【今の位置】を古いサーバー位置と較べていた。
+         v203では「サーバーがどの指示番号まで反映したか」を受け取り、
+         その番号の時の手元の位置とだけ較べる(netReconcile)。 */
     const nSubDt = Math.min(8, Math.max(1, Math.round(dt / (1 / 60))));
     const nSub = Math.max(stepD > 0.3 ? Math.min(16, Math.ceil(stepD / 0.3)) : 1, nSubDt);
     const ox = this.pos.x, oz = this.pos.z;
@@ -7489,7 +7494,6 @@ class Fighter {
       }
       if (this.y <= 0) { this.y = 0; this.vy = 0; this.grounded = true; }
     }
-    }
     this.mesh.position.y = this.y;
     if (this.rollerT >= 0) updateRollerDive(this, dt);
     if (this.rollerDropT >= 0 || this.rollerDelayT > 0) updateRollerDrop(this, dt);
@@ -7516,7 +7520,7 @@ class Fighter {
     if (this.vaultT >= 0) updateVault(this, dt);
     if (this.ropeT >= 0) updateStoneHook(this, dt);
     if (this.blinkT >= 0) updateBlink(this, dt);
-    if (!netFollowsServer(this)) updateUnstick(this, dt);
+    updateUnstick(this, dt);
     this.updateAstral(dt);
     if (!this.alive) return;
     this.animate(dt);
@@ -13073,7 +13077,9 @@ function updateLabels(dt) {
     if (!f.label) continue;
     if (!f.alive) { f.label.style.display = 'none'; continue; }
     if (f !== me && hiddenFromFoes(f)) { f.label.style.display = 'none'; continue; }
-    if (f !== me && net.on) { f.label.style.display = 'none'; continue; }
+    /* ★v203: オンラインでも相手の名前・段・体力帯を出す。
+       体力/盾/段は写しで届いているので、隠す理由が無かった ——
+       隠していたせいでオフラインより情報が薄く、別のゲームのようになっていた。 */
     if (me && me.alive && f !== me) {
       f._occlT = (f._occlT || 0) - step;
       if (f._occlT <= 0) {
@@ -13144,8 +13150,10 @@ function snapshotWorld() {
   for (let i = 0; i < fs.length; i++) {
     const x = fs[i];
     if (!x.netInput && !x.isPlayer) continue;
+    /* 末尾は【何番の指示まで反映したか】。手元の先読みと突き合わせる基準になる。 */
     g.push([i, Math.round(x.sp || 0), r2(Math.max(0, x.skillCd || 0)),
-      r2(x.hookCharge || 0), r2(x.accelCharge || 0), r2(Math.max(0, x.spExhaust || 0))]);
+      r2(x.hookCharge || 0), r2(x.accelCharge || 0), r2(Math.max(0, x.spExhaust || 0)),
+      (x.netInput && x.netInput.q) | 0]);
   }
   return {
     mt: r2(world.matchT || 0),
@@ -13294,8 +13302,57 @@ const net = {
   char: 'takeru', name: '', waiting: false, msg: '', died: false,
   ping: 0,                              
 };
-/* オンライン中の自分。位置と接地はサーバーの写しだけで決まる。 */
-function netFollowsServer(f) { return !!(net.on && f && f.isPlayer); }
+/* ★★★v203: 手元の先読みと、サーバーの写しの照らし合わせ。
+   ★肝は【較べる相手】。指示には番号を振って送り、サーバーは
+     「何番まで反映したか」を返す。手元はその番号の時の自分の位置を覚えていて、
+     それとだけ較べる。今の位置と較べると、往復時間ぶん必ず進んでいる分が
+     毎回「ずれ」に見えて、指を離した瞬間に引き戻される(v195/196の失敗)。
+   ★測ったずれはその場で当てず、いったん溜めて毎フレーム少しずつ返す。
+     一気に当てると、そこで必ずカクつく。 */
+const NET_FIX_DEAD = 0.45;        // これ以下のずれは直さない(1拍ぶんの誤差)
+const NET_FIX_SNAP = 3.00;        // これ以上は一瞬で合わせる(復活・打ち上げ・転送)
+const NET_FIX_BACK = 6.0;         // 溜めたずれを返す速さ(約1/6秒で戻る)
+function netAckSeq(snap) {
+  if (!snap || !snap.g) return 0;
+  for (const r of snap.g) if (r[0] === net.slot) return r[6] | 0;
+  return 0;
+}
+function netMeasureError(snap) {
+  const p = world.player;
+  if (!p || !net.on || net.slot < 0) return;
+  const rb = snap.f && snap.f.find((r) => r[0] === net.slot);
+  if (!rb) return;
+  const sq = netAckSeq(snap);
+  const h = net.hist;
+  if (!sq || !h || !h.length) return;
+  let past = null;
+  for (let k = h.length - 1; k >= 0; k--) { if (h[k].q === sq) { past = h[k]; break; } }
+  while (h.length > 1 && h[0].q < sq) h.shift();      // 使い終わった控えを捨てる
+  if (!past) return;
+  const ex = rb[1] - past.x, ey = rb[2] - past.y, ez = rb[3] - past.z;
+  const eh = Math.hypot(ex, ez);
+  if (eh > NET_FIX_SNAP || Math.abs(ey) > NET_FIX_SNAP) {
+    p.pos.x += ex; p.y += ey; p.pos.z += ez;
+    p.vy = 0;
+    pushOut(p.pos, 0.55, p.y, p);
+    net.fix = null;
+    net.fixSnaps = (net.fixSnaps | 0) + 1;
+    return;
+  }
+  const f = net.fix || (net.fix = { x: 0, y: 0, z: 0 });
+  f.x = eh > NET_FIX_DEAD ? ex : 0;
+  f.z = eh > NET_FIX_DEAD ? ez : 0;
+  f.y = Math.abs(ey) > NET_FIX_DEAD ? ey : 0;
+  net.fixErr = eh;
+}
+function netDrainError(dt) {
+  const f = net.fix, p = world.player;
+  if (!f || !p) return;
+  if (Math.hypot(f.x, f.z) < 0.01 && Math.abs(f.y) < 0.01) { net.fix = null; return; }
+  const k = clamp(dt * NET_FIX_BACK, 0, 1);
+  p.pos.x += f.x * k; p.pos.z += f.z * k; p.y += f.y * k;
+  f.x -= f.x * k; f.z -= f.z * k; f.y -= f.y * k;
+}
 
 /* ★★v198: 遊んでいる人の手元の実測値を、サーバーの記録に流す。
    ★これが無いと「カクつく」の原因が【描画が追いつかない】のか
@@ -13325,9 +13382,14 @@ function diagTick(dt) {
     /* 補間が終端に張り付いた割合 = 手元が【次の写しを待って止まっていた】割合 */
     stv: Math.round((diag.starved / Math.max(1, diag.frames)) * 100),
     rtt: Math.round(net.ping || 0),
+    /* ★v203: 先読みと審判のずれ(cm)と、合わせ直した回数。
+       ここが小さいほど手元の予想が当たっている = 引き戻しが起きない。 */
+    fx: Math.round((net.fixErr || 0) * 100),
+    sn: net.fixSnaps | 0,
   }));
   diag.frames = 0; diag.starved = 0; diag.since = 0;
   diag.snapGaps.length = 0;
+  net.fixSnaps = 0;
 }
 function netUrl() {
   const L = (typeof location !== 'undefined' && location) ? location : {};
@@ -13418,6 +13480,7 @@ function netOnMessage(m) {
     const q = net.q || (net.q = []);
     q.push({ s: m, beat: net.bBeat });
     while (q.length > 24) q.shift();
+    netMeasureError(m);          /* ★v203: 写しが来た時だけ、ずれを測り直す */
     if (m.cut) world.freezeT = Math.max(world.freezeT, 1000 / NET_TICK_HZ / 1000 + 0.03);
     netFeedback(m);
   } else if (m.t === 'say') {
@@ -13442,6 +13505,8 @@ function netStart(m) {
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   /* ★v199: 写しの棚と再生の時計を毎試合たたむ。持ち越すと最初の一瞬だけ飛ぶ。 */
   net.q = []; net.bBeat = 0; net.play = undefined;
+  /* ★v203: 先読みの控えとずれも毎試合たたむ */
+  net.hist = []; net.seq = 0; net.fix = null; net.fixErr = 0; net.fixSnaps = 0;
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -13502,10 +13567,16 @@ function netSendInput(dt) {
     const ri = rollerAimInput();
     smx = ri.x * ri.mag; smz = ri.z * ri.mag;
   }
-  /* ★v200: サーバーが今どの向きの指示で動かしているか。先読みの可否に使う。 */
-  net.lastMag = Math.hypot(smx, smz);
+  /* ★★v203: 今から送る指示に番号を振り、送った瞬間の位置を同じ番号で控える。
+     サーバーが「何番まで反映した」と言ってきた時、その番号の控えとだけ較べる。 */
+  net.seq = (net.seq | 0) + 1;
+  const qn = net.seq;
+  const hist = net.hist || (net.hist = []);
+  hist.push({ q: qn, x: p.pos.x, y: p.y, z: p.pos.z });
+  while (hist.length > 120) hist.shift();
   net.ws.send(JSON.stringify({
     t: 'in',
+    q: qn,
     mx: r2(smx), mz: r2(smz),
     f: r2(Math.atan2(r.ux, r.uz)), dy: r2(r.dy),
     atk: !!p.attackHeld, stand: !!p.standOn, crouch: !!p.crouch,
@@ -13519,6 +13590,8 @@ function netSendInput(dt) {
 }
 function netApplySnapshots(dt) {
   if (!net.on || !net.b) return 0;
+  /* 自分のずれ返しは、写しが何本溜まっているかに関係なく毎フレーム進める */
+  netDrainError(dt);
   const q = net.q;
   if (!q || q.length < 2) return 0;
   /* ★★v199: 再生はサーバーの拍の上を、実時間で等速に進む。
@@ -13559,7 +13632,10 @@ function netApplySnapshots(dt) {
     const ra = rowsA[i] || rb;
     x.hp = rb[5]; x.shield = rb[6]; x.level = rb[7];
     const fl = (rb[8] | 0) & EV_FLAG_MASK;       
+    const wasAlive = x.alive;
     x.alive = !!(fl & NET_F_ALIVE);
+    /* ★v203: 倒れた瞬間の音と光。die() は呼ばない —— 魂玉を二重に落とすため。 */
+    if (wasAlive && !x.alive) netPlayDeathJuice(x);
     if (i !== net.slot) {
       x.standOn = !!(fl & NET_F_STAND);
       x.crouch = !!(fl & NET_F_CROUCH);
@@ -13569,24 +13645,9 @@ function netApplySnapshots(dt) {
     const gy = ra[2] + (rb[2] - ra[2]) * uy;
     const gz = ra[3] + (rb[3] - ra[3]) * u;
     if (i === net.slot) {
-      /* ★v197: 自分の位置も【サーバーの写しだけ】で決める。
-         手元で先に歩いてから座標を寄せ合う作りをやめた —— 差が溜まらないので、
-         指を離した時の引き戻しも、壁に見える食い違いも起きない。 */
-      /* ★★v200: 自分については【スティックを倒している間だけ】先を見る。
-         ★倒していない時に先を見ると、止まったあとも進んでから引き戻される ——
-           これが「移動中に滑る」感触の正体。押していないなら進むはずがない、
-           という当たり前の前提を先読みにも入れる。 */
-      let px = gx, pz = gz;
-      if (!((net.lastMag || 0) > 0.2)) {
-        const us = Math.min(u, 1);
-        px = ra[1] + (rb[1] - ra[1]) * us;
-        pz = ra[3] + (rb[3] - ra[3]) * us;
-      }
-      /* 先を見た位置が壁の中なら、写しの位置で止める。 */
-      if (u > 1 && trappedAt(px, pz, gy)) { px = rb[1]; pz = rb[3]; }
-      x.pos.x = px; x.y = gy; x.pos.z = pz;
-      x.vy = 0;
-      x.grounded = !!(fl & NET_F_GROUND);
+      /* ★★v203: 自分の位置は手元の先読みが持つので、ここでは触らない。
+         ずれの返却は上の netDrainError が毎フレーム少しずつ行う。
+         体力・盾・段は写しの値をそのまま使う(このループの先頭で入れてある)。 */
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
       const vz = (rb[3] - ra[3]) / (span / 1000);
@@ -13607,6 +13668,12 @@ function netApplySnapshots(dt) {
         x.netInput.stand = !!(fl & NET_F_STAND);
         x.netInput.crouch = !!(fl & NET_F_CROUCH);
       }
+      /* ★★v203: 相手の「殴っている」を手元にも伝える。
+         ★オンラインでは updateAI を回さない = applyNetInput が走らないので、
+           netInput.atk を入れても attackHeld には誰も移していなかった。
+           そのため他の人は【一度も腕を振らずに近づいてくる】ように見えていた。 */
+      x.attackHeld = !!(fl & NET_F_SWING);
+      x.aimLock = x.attackHeld;
       x.moveDir.set(dx, 0, dz);
       {
         const wantBlock = !!(fl & NET_F_BLOCK);
@@ -13643,6 +13710,19 @@ function netCheckOutcome() {
       showResult(true, 1);
     }
   }
+}
+function netPlayDeathJuice(f) {
+  if (!f) return;
+  f.ghostMesh && (f.ghostMesh.visible = false);
+  f.aura && (f.aura.visible = false);
+  f.ultAura && (f.ultAura.visible = false);
+  f.deathT = 0;
+  sfx.ko(Math.max(0.45, volAt(f.pos)));
+  spawnBurst(f.pos.clone().add(new THREE.Vector3(0, 1, 0)), 0xffffff, { n: 18, speed: 6, up: 5, life: 0.6 });
+  spawnPillar(f.pos, 0x9db4ff, { h: 12, r: 0.7, life: 0.6 });
+  spawnTimeRipple(f.pos, f.def.ghostColor, { n: 3, r1: 13, life: 0.75, y: f.y + 0.14 });
+  const n = world.fighters.filter((x) => x.alive && !x.isMob).length;
+  if (n === 3) announce('残り3人!!');
 }
 function netFeedback(m) {
   if (!net.on || !m || !m.f) return 0;
@@ -13703,10 +13783,19 @@ function netFeedback(m) {
       n++;
     }
     if (lv > p0.lv) {
-      spawnBurst(pos.clone().add(new THREE.Vector3(0, 1, 0)), 0xffd76a,
-        { n: 14, speed: 5, up: 3, life: 0.6 });
-      spawnRing(pos, 0xffd76a, { r1: 2.6, life: 0.45 });
-      if (self) { sfx.orb(); announce('レベルアップ!'); }
+      if (p0.lv < 1 && lv >= 1) {
+        spawnRing(pos, x.def.ghostColor, { r1: 6, life: 0.7 });
+        spawnPillar(pos, x.def.ghostColor, { h: 14, r: 1.5, life: 0.85 });
+        spawnBurst(pos.clone(), x.def.ghostColor, { n: 26, speed: 7, up: 6, life: 0.8 });
+        sfx.manifest(volAt(pos));
+        if (self) { announce('ゴースト発現!!'); shake(0.5); }
+      } else {
+        spawnBurst(pos.clone().add(new THREE.Vector3(0, 1, 0)), 0xffd76a,
+          { n: 14, speed: 5, up: 3, life: 0.6 });
+        spawnRing(pos, 0xffd76a, { r1: 2.6, life: 0.45 });
+        spawnPillar(pos, 0xffd76a, { h: 7, r: 0.9, life: 0.55 });
+        if (self) sfx.levelup();
+      }
       n++;
     }
   }
@@ -14609,7 +14698,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v202';
+const GAME_VERSION = 'v203';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14860,7 +14949,8 @@ function animate() {
       updateCrimson(dt);   
       updateHeaven(dt);    
       updateBlurTrail(dt);   
-      updateScanMarks(dt);    
+      updateScanMarks(dt);
+      updateOrbs(dt);           /* 拾う判定はサーバー。揺れて光る絵だけ手元で動かす。 */
       netApplySnapshots(dt);
     } else {
       world.matchT += dt;

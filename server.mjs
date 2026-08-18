@@ -216,7 +216,7 @@ async function makeRoom(members) {
     f.netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false, crouch: false,
       jump: false, skill: false, ult: false,
       dash: false, vault: false, climb: false, skillHeld: false,
-      ax: NaN, ay: NaN, az: NaN };   // ★v181 #394/#398 ★v185 #407
+      ax: NaN, ay: NaN, az: NaN, q: 0 };
     m.fighter = f;
     m.sock.send(JSON.stringify({ t: 'start', room: id, seed, map, slot: i, roster }));
   });
@@ -302,7 +302,7 @@ function seatInto(room, seat, c) {
   f.netInput = { mx: 0, mz: 0, facing: 0, dy: 0, atk: false, stand: false, crouch: false,
     jump: false, skill: false, ult: false,
     dash: false, vault: false, climb: false, skillHeld: false,
-    ax: NaN, ay: NaN, az: NaN };     // ★v185 #407: createRoom と同じ形にそろえる
+    ax: NaN, ay: NaN, az: NaN, q: 0 };
   c.sock.send(JSON.stringify({ t: 'start', room: room.id, seed: room.seed,
     map: room.map, slot: seat, roster: room.roster }));
   console.log(`[部屋] ${room.id} に途中参加 — 席${seat + 1} (${c.name})`
@@ -629,6 +629,9 @@ attachWs(server, {
          ★NaN や Infinity が1つ入るだけで、その人の座標が壊れて
            世界じゅうの計算(距離・エリア・当たり)が NaN に染まる。 */
       const fin = (v, lo, hi) => { const x = +v; return Number.isFinite(x) ? Math.min(hi, Math.max(lo, x)) : 0; };
+      /* ★v203: 指示の番号。手元がこの番号で自分の位置を覚えているので、
+         写しに載せて返す = 手元は「同じ時点どうし」で較べられる。 */
+      { const q = +m.q; if (Number.isFinite(q) && q > (n.q || 0)) n.q = Math.min(2e9, q); }
       n.mx = fin(m.mx, -1, 1); n.mz = fin(m.mz, -1, 1);
       n.facing = fin(m.f, -Math.PI * 2, Math.PI * 2); n.dy = fin(m.dy, -8, 8);
       n.atk = !!m.atk; n.stand = !!m.stand; n.crouch = !!m.crouch;
@@ -664,7 +667,8 @@ attachWs(server, {
         + ` fps${num(m.fps, 500)}`
         + ` 写し中央${num(m.g50, 9999)}ms/9割${num(m.g90, 9999)}ms/最大${num(m.gmax, 99999)}ms`
         + ` 待ち${num(m.stv, 100)}%`
-        + ` 往復${num(m.rtt, 99999)}ms`);
+        + ` 往復${num(m.rtt, 99999)}ms`
+        + ` 先読みのずれ${num(m.fx, 99999)}cm 合わせ直し${num(m.sn, 9999)}回`);
     } else if (m.t === 'pog') {
       /* ★v117 #280: 返事が返ってきた。★自分が送った番号(k)の返事だけを見る ——
          見ないと、古い返事や作った返事で遅れをいくらでも盛れる。 */
