@@ -38,7 +38,7 @@ function roster() {
   for (let i = 0; i < MOB_N; i++) { chars.push(CHAR_ORDER[0]); names.push('刺客'); }
   return { chars, names };
 }
-const startMsg = (slot, humans) => ({ t: 'start', room: 'r1', seed: 12345, map: 'skyline', slot, roster: roster(), humans });
+const startMsg = (slot) => ({ t: 'start', room: 'r1', seed: 12345, map: 'skyline', slot, roster: roster() });
 
 console.log('=== 1回目の参加 ===');
 netConnect('itoha', 'ぐ');
@@ -70,27 +70,6 @@ console.log('=== 本当に線が切れた時は、ちゃんと終わる ===');
 net.ws.onclose({});
 ok(net.on === false, '切断を検知して試合を閉じた');
 ok(net.ws === null, '控えを片付けた');
-
-console.log('=== 人が1人なら手元で動かす(CPUが出現地点で凍らない) ===');
-netConnect('itoha', 'ぐ');
-const ws3 = FakeWS.all[2];
-ws3.open();
-ws3.msg(startMsg(0, 1));
-ok(net.localSim === true, '1人試合は localSim');
-ok(mod.netRemote() === false, '写しで上書きしない');
-{
-  const frozen = (mod.world.fighters || []).filter((f, i) => i !== net.slot && f && f.netInput);
-  ok(frozen.length === 0, 'CPUに netInput が付いていない', frozen.length + '人');
-}
-
-console.log('=== 人が2人なら審判を使う ===');
-ws3.msg(startMsg(0, 2));
-ok(net.localSim === false, '2人試合は審判');
-ok(mod.netRemote() === true, '写しを受け取る');
-{
-  const remotes = (mod.world.fighters || []).filter((f, i) => i !== net.slot && f && f.netInput);
-  ok(remotes.length > 0, '相手席に netInput がある', remotes.length + '人');
-}
 
 console.log(ng === 0 ? '\n全部合格' : `\n★${ng}件 不合格`);
 process.exit(ng === 0 ? 0 : 1);

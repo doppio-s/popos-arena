@@ -441,6 +441,13 @@ function watchStuck(room, m, dt) {
     + ` 精神${Math.round(f.sp || 0)}`
     + ` 状態[${st.join(' ') || 'なし'}]`
     + ` 箱[${boxes.length ? boxes.join(' | ') : 'なし'}]`);
+  /* ★v204: 箱の中に埋まっている時だけ引きはがす。正面の壁に押し付けている分は触らない。 */
+  try {
+    if (room.mod.trappedInGeometry && room.mod.trappedInGeometry(f) && room.mod.unstickFighter) {
+      room.mod.unstickFighter(f);
+      console.log(`[止まり] ${m.name || '?'} 席${m.slot + 1} 引きはがした → (${f.pos.x.toFixed(1)}, ${f.pos.z.toFixed(1)})`);
+    }
+  } catch (e) {}
 }
 
 /* ---------- 全体の時計 ---------- */
@@ -509,7 +516,7 @@ setInterval(() => {
       } catch (e) { /* 世界が入れ替わる瞬間などは黙って見送る */ }
     }
     /* 終わったか(全滅 or 制限時間)
-       ★v204: 人が1人の部屋は手元が試合を動かしている。
+       ★v205: 人が1人の部屋は手元が試合を動かしている。
          サーバー側の体は入力が来ないので安置で死に、審判が「決着」にして
          数秒で部屋を畳む → 遊んでいる最中に線が切れる。
          1人の間は審判の決着では畳まない。無人・10分・人が2人以上の決着だけ。 */

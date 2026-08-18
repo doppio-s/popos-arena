@@ -123,7 +123,6 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'VANISH_DRAIN, VANISH_BLINK, BLOCK_DRAIN_BY, blockDrainOf, zoneNextCircle, applyCrimsonView, ' +
   'endCrimson, CRIMSON_SKY, CRIMSON_C1, CRIMSON_C2, scene, ' +   /* v116 #278 */
   'net, netConnect, netDisconnect, netOnMessage, netStart, netEnd, netUrl, ' +   /* v116 #277 */
-  'netRemote, netApplyHumans, ' +
   'snapshotOrbs, applyOrbSnapshot, NET_PULL_Y, NET_SNAP_DIST_Y, showResult, refreshAlive, netSendInput, netApplySnapshots, netCheckOutcome, netLerpAngle, NET_LERP_MS, NET_SEND_HZ, NET_SNAP_DIST, ' +
   'LAG_HIST_T, LAG_MAX, lagOf, recordLagHistory, rewindFighters, restoreFighters, withRewind, ' +   /* v117 #280 */
   'VANISH_SP_GAIN, VANISH_SP_STEAL, startVanishWarp, ' +   /* v119 #282 */
