@@ -5826,6 +5826,15 @@ function announce(text, opts = {}) {
   if (ANNOUNCE_ZONE_ONLY && !opts.zone) return;
   announceQueue.push({ text, sound: opts.sound });
 }
+/* ★★★v201: 本人へ知らせる。オンラインでは【審判の口から】届ける。
+   ★これまでは `announceTo(this, ...)` だった —— サーバーには
+     isPlayer が誰も居ないので、断った理由は誰にも届かず捨てられていた。
+     結果、利用者の画面では技が【黙って不発になる】= 「スキルが使えない」。 */
+function announceTo(f, text, opts) {
+  if (!f) return;
+  if (f.isPlayer) { announce(text, opts); return; }
+  if (f.netInput && world.onSay) world.onSay(f, text);
+}
 let LANG = 'ja';
 try {
   const savedLang = (typeof localStorage !== 'undefined') ? localStorage.getItem('gs_lang') : null;
@@ -6200,7 +6209,7 @@ class Fighter {
     spawnBurst(this.pos.clone().add(new THREE.Vector3(Math.sin(this.facing) * 1.1, 1.3, Math.cos(this.facing) * 1.1)),
       0xdff4ff, { n: 14, speed: 3.2, up: 1.5, life: 0.45, size: 0.12 });
     sfx.heavy(volAt(this.pos) * 0.7);
-    if (this.isPlayer) announce('ブロッキング!');
+    announceTo(this, 'ブロッキング!');
   }
   endBlock() {
     if (!this.blockHold) return;
@@ -6852,7 +6861,7 @@ class Fighter {
     if (!this.alive) return false;
     if (crimsonOwner(this)) return false;      
     if (this.def.id === 'kagemitsu' && world.crimson) {
-      if (this.isPlayer) announce('時が消し飛んでいる…');
+      announceTo(this, '時が消し飛んでいる…');
       return false;
     }
     if (this.level < this.skillLvReq() || this.skillCd > 0 || this.stunT > 0) return false;
@@ -6909,7 +6918,7 @@ class Fighter {
       if (!spot) {
         this.refundSp(skillCost);
         this.skillCd = 0.25;
-        if (this.isPlayer) announce('目の前に壁が無い');
+        announceTo(this, '目の前に壁が無い');
         return false;
       }
       spawnZipper(this, spot.x, spot.y, spot.z, spot.r);
@@ -6926,7 +6935,7 @@ class Fighter {
       if (this.accelCharge < 1) {
         this.refundSp(skillCost);
         this.skillCd = 0.2;
-        if (this.isPlayer) announce('加速の残りが無い');
+        announceTo(this, '加速の残りが無い');
         return false;
       }
       this.accelCharge -= 1;
@@ -6934,25 +6943,25 @@ class Fighter {
       spawnRing(this.pos, 0xe8e8f8, { r1: 2.6, life: 0.3 });
       spawnBurst(this.pos.clone().add(new THREE.Vector3(0, 0.8, 0)), 0xffffff,
         { n: 10, speed: 4, up: 2, life: 0.35, size: 0.1 });
-      if (this.isPlayer) announce('時が加速する…');
+      announceTo(this, '時が加速する…');
     } else if (id === 'itoha') {
       const to = hookSpotOf(this);
       if (!to) {
         this.refundSp(skillCost);
         this.skillCd = 0.25;
-        if (this.isPlayer) announce('糸を掛ける物が無い');
+        announceTo(this, '糸を掛ける物が無い');
         return false;
       }
       if (to.dist < 2.0) {
         this.refundSp(skillCost);
         this.skillCd = 0.3;
-        if (this.isPlayer) announce('近すぎる');
+        announceTo(this, '近すぎる');
         return false;
       }
       if ((this.hookCharge || 0) < 1) {
         this.refundSp(skillCost);
         this.skillCd = 0.25;
-        if (this.isPlayer) announce('フックの残りが無い');
+        announceTo(this, 'フックの残りが無い');
         return false;
       }
       this.hookCharge -= 1;
@@ -6978,7 +6987,7 @@ class Fighter {
       pr.homeR = GUN_HOMING_R;      
       this.skillCd = isHuman(this) ? 0 : this.def.skillCd;   
       sfx.pew(Math.max(0.4, volAt(this.pos)));
-      if (this.isPlayer) announce('曲がる弾丸!');
+      announceTo(this, '曲がる弾丸!');
     } else if (id === 'van') {
       startBlink(this);
     } else if (id === 'kageto') {
@@ -7006,7 +7015,7 @@ class Fighter {
       spawnBurst(this.pos.clone().add(new THREE.Vector3(dir.x * 0.8, 1.3, dir.z * 0.8)),
         0xa855f7, { n: 8, speed: 3, life: 0.3, size: 0.09 });   
       sfx.pew(Math.max(0.4, volAt(this.pos)));
-      if (this.isPlayer) announce('空気弾!');
+      announceTo(this, '空気弾!');
     } else if (id === 'naoya') {
       this.hp = Math.min(this.maxHp, this.hp + 420);   
       this.refundSp(250);                              
@@ -7029,15 +7038,15 @@ class Fighter {
     if (horseBusy(this) || needlesBusy(this) || flameBarrageBusy(this)) return false;   
     if (this.diveT > 0 || this.diveLock > 0) return false;   
     if (this.def.id === 'akira' && this.y > ZIP_DIVE_MAX_Y) {
-      if (this.isPlayer) announce('地面の上でしか潜れない');
+      announceTo(this, '地面の上でしか潜れない');
       return false;
     }
     if (this.def.id === 'kageto' && (this.btdArmed || this.btdUsed)) {
-      if (this.isPlayer) announce(this.btdUsed ? '切り札は使い切った' : 'すでに仕込んである');
+      announceTo(this, this.btdUsed ? '切り札は使い切った' : 'すでに仕込んである');
       return false;
     }
     if (this.ultLeft <= 0) {
-      if (this.isPlayer) announce('奥義は使い切った');
+      announceTo(this, '奥義は使い切った');
       return false;
     }
     if (isTimeStopper(this.def.id) && world.timeStop) return false;
@@ -7074,7 +7083,7 @@ class Fighter {
       spawnPillar({ x: c0.x, z: c0.z }, 0x4fffa0, { h: 10, r: 1.1, life: BARRIER_DELAY });
       sfx.emerald(Math.max(0.35, volAt(this.pos) * 0.6));
     } else if (id === 'soshi') {
-      if (!this.grounded) { this.heavenPend = true; if (this.isPlayer) announce('着地したら発動する'); }
+      if (!this.grounded) { this.heavenPend = true; announceTo(this, '着地したら発動する'); }
       else startHeaven(this);
     } else if (id === 'itoha') {
       fireStringJail(this);
@@ -7087,18 +7096,18 @@ class Fighter {
       this.shield = Math.min(this.maxShield, this.shield + GRIP_RAGE_SHIELD);
       spawnRing(this.pos, 0xc8b8ff, { r1: 4.0, life: 0.6 });
       spawnPillar(this.pos, 0xc8b8ff, { h: 7, r: 0.8, life: 0.5 });
-      if (this.isPlayer) announce('かかってこい!!');
+      announceTo(this, 'かかってこい!!');
     } else if (id === 'kenya') {
       beginNeedles(this);
-      if (this.isPlayer) announce('溜めている…!');
+      announceTo(this, '溜めている…!');
     } else if (id === 'akira') {
       startBucciDive(this);
-      if (this.isPlayer) announce('潜行!!');
+      announceTo(this, '潜行!!');
     } else if (id === 'kaen') {
       beginFlameBarrage(this);
     } else if (id === 'dan') {
       beginHorseBarrage(this);
-      if (this.isPlayer) announce('構えた…!');
+      announceTo(this, '構えた…!');
     } else if (isTimeStopper(id)) {
       this.tsChargeT = tsWindupOf(id);   
       this.moveDir.set(0, 0, 0);
@@ -7107,7 +7116,7 @@ class Fighter {
       world.tsChargeFx = { owner: this, dur: tsWindupOf(id), t: 0 };
       spawnRing(this.pos, id === 'van' ? 0xffd76a : 0x7fd8ff, { r1: 3.2, life: 0.5 });
       spawnPillar(this.pos, id === 'van' ? 0xffd76a : 0x7fd8ff, { h: 9, r: 0.7, life: tsWindupOf(id) });
-      if (this.isPlayer) announce('時止めの構え…!');
+      if (isHuman(this)) announceTo(this, '時止めの構え…!');
       else if (volAt(this.pos) > 0.4) announce(`${this.name}が構えた…!`);
     } else if (id === 'naoya') {
       const fwd = new THREE.Vector3(Math.sin(this.facing), 0, Math.cos(this.facing));
@@ -7154,7 +7163,7 @@ class Fighter {
     spawnRing(new THREE.Vector3(cx, this.astral ? this.astralPos.y : this.y + 0.1, cz),
       0x8fff6a, { r1: SCAN_R * 0.55, life: 0.85 });
     sfx.pew(0.5);
-    if (this.isPlayer) announce(found ? `スキャン: ${found}人を捕捉` : 'スキャン: 反応なし');
+    announceTo(this, found ? `スキャン: ${found}人を捕捉` : 'スキャン: 反応なし');
     return true;
   }
   tryDash() {
@@ -7627,7 +7636,7 @@ class Fighter {
     spawnRing(this.pos, 0x5fe8a8, { r1: 2.6, life: 0.45, y: this.y + 0.05 });
     spawnBurst(this.pos.clone().add(new THREE.Vector3(0, 1.4, 0)), 0xd0ffe8, { n: 14, speed: 3.5, life: 0.5, up: 1.5 });
     sfx.dash(this.isPlayer ? 0.9 : volAt(this.pos));
-    if (this.isPlayer) announce('幽体離脱 — 本体は無防備だ');
+    announceTo(this, '幽体離脱 — 本体は無防備だ');
     return true;
   }
   endAstral(forced = false) {
@@ -8471,7 +8480,7 @@ function beginRollerAim(f) {
   if (f.label) f.label.style.display = 'none';
   if (f.isPlayer && !f.rollerGhost) f.rollerGhost = makeRollerGhost();
   if (f.isPlayer) { world.camPitch = 0.62; world.camIdleT = 0; }
-  if (f.isPlayer) announce('落とす場所を決めろ!');
+  if (isHuman(f)) announceTo(f, '落とす場所を決めろ!');
   else if (volAt(f.pos) > 0.35) announce(`${f.name}が上空で構えている!`);
   return true;
 }
@@ -8949,7 +8958,7 @@ function updateBlink(f, dt) {
   clearBlink(f);
   if (dist < BLINK_STEP * 0.5) {
     f.refundSp(skillCostOf(f.def.id, f.level));
-    if (f.isPlayer) announce('壁だ!');
+    announceTo(f, '壁だ!');
     return;
   }
   spawnBurst(_blinkP.set(f.pos.x, f.y + 1.1, f.pos.z), 0xffd76a,
@@ -9104,7 +9113,7 @@ function releaseTrapHold(f, instant) {
     const got = handScrape(f, world.fighters, canPullChars);
     if (!got.chars.length && !got.orbs) {
       f.skillCd = 0.25;
-      if (f.isPlayer) announce('掴む物が無い');
+      announceTo(f, '掴む物が無い');
       return false;
     }
     const cost = got.chars.length ? GRIP_SCRAPE_COST : GRIP_SCRAPE_COST_ITEM;
@@ -9905,7 +9914,7 @@ function startStoneHook(f, to) {
   f.ghostActiveT = Math.max(f.ghostActiveT, 2.5);
   spawnRing(f.pos, 0x7ee8d6, { r1: 2.4, life: 0.3 });
   sfx.pew ? sfx.pew(Math.max(0.35, volAt(f.pos))) : null;
-  if (f.isPlayer) announce('フック!');
+  announceTo(f, 'フック!');
   return true;
 }
 function endRopeSwing(f, quiet) {
@@ -12188,11 +12197,20 @@ function applyNetInput(bot, dt) {
   bot.attackHeld = !!n.atk;
   bot.standOn = !!n.stand && bot.level >= 1;
   bot.crouch = !!n.crouch;
-  if (n.jump) { bot.tryJump(); n.jump = false; }
-  if (n.skill) { bot.trySkill(world.fighters); n.skill = false; }
-  if (n.ult) { if (crimsonOwner(bot)) endCrimson(bot, false); else bot.tryUlt(world.fighters); n.ult = false; }
-  if (n.dash) { bot.tryDash(); n.dash = false; }
-  if (n.vault) { bot.startVault(findVaultWindow(bot)); n.vault = false; }
+  /* ★★v201: 押した瞬間の操作は【通ったか弾かれたか】を外へ知らせる。
+     ★オンラインでは、この4つが弾かれても手元には何の音も表示も出ない ——
+       利用者からは「ジャンプもスキルも使えない」としか見えず、
+       弾いた側の理由が誰にも残らなかった。審判に書き留めさせる。 */
+  const act = world.onAct;
+  if (n.jump) { const ok = bot.tryJump(); n.jump = false; if (act) act(bot, 'ジャンプ', ok); }
+  if (n.skill) { const ok = bot.trySkill(world.fighters); n.skill = false; if (act) act(bot, 'スキル', ok); }
+  if (n.ult) {
+    let ok;
+    if (crimsonOwner(bot)) ok = endCrimson(bot, false); else ok = bot.tryUlt(world.fighters);
+    n.ult = false; if (act) act(bot, '奥義', ok);
+  }
+  if (n.dash) { const ok = bot.tryDash(); n.dash = false; if (act) act(bot, 'ダッシュ', ok); }
+  if (n.vault) { const ok = bot.startVault(findVaultWindow(bot)); n.vault = false; if (act) act(bot, '窓抜け', ok); }
   if (!n.skillHeld && bot.blockHold) bot.endBlock();
   if (!n.skillHeld && bot.trapHoldT > 0) releaseTrapHold(bot);
   if (bot.groundAim && bot.attackHeld) fireGroundRush(bot);
@@ -13117,8 +13135,21 @@ function snapshotWorld() {
     f.push([i, r2(x.pos.x), r2(x.y), r2(x.pos.z), r2(x.facing),
       Math.round(x.hp), Math.round(x.shield || 0), x.level | 0, evRow(x, flags)]);
   }
+  /* ★★★v201: 人が座っている席は【精神力と技の残り】も配る。
+     ★v114〜v200 これらは写しに一切入っていなかった —— つまり画面のゲージは
+       手元の推測で、審判が一度も直したことがない。ずれると
+       「ゲージは満タンなのに技が出ない」= 黙って不発、になる。
+     ★人の席だけなので、増える量は8人ぶんで済む。 */
+  const g = [];
+  for (let i = 0; i < fs.length; i++) {
+    const x = fs[i];
+    if (!x.netInput && !x.isPlayer) continue;
+    g.push([i, Math.round(x.sp || 0), r2(Math.max(0, x.skillCd || 0)),
+      r2(x.hookCharge || 0), r2(x.accelCharge || 0), r2(Math.max(0, x.spExhaust || 0))]);
+  }
   return {
     mt: r2(world.matchT || 0),
+    ...(g.length ? { g } : null),
     ...(world.btdCut ? { cut: 1 } : null),
     ...((world.netHits && world.netHits.length) ? { hit: world.netHits.splice(0) } : null),
     ...((world.netKills && world.netKills.length) ? { kil: world.netKills.splice(0) } : null),
@@ -13366,6 +13397,9 @@ function netOnMessage(m) {
     while (q.length > 24) q.shift();
     if (m.cut) world.freezeT = Math.max(world.freezeT, 1000 / NET_TICK_HZ / 1000 + 0.03);
     netFeedback(m);
+  } else if (m.t === 'say') {
+    /* ★v201: 審判が断った理由。これが無いと技は黙って不発になる。 */
+    if (typeof m.m === 'string' && m.m) announce(m.m.slice(0, 40));
   } else if (m.t === 'png') {
     if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k }));
     net.ping = m.rtt || 0;
@@ -13475,6 +13509,17 @@ function netApplySnapshots(dt) {
   const rowsA = {}, rowsB = {};
   for (const r of A.f) rowsA[r[0]] = r;
   for (const r of B.f) rowsB[r[0]] = r;
+  /* ★v201: 精神力と技の残りは【補間しない】。最新の写しの値をそのまま使う。
+     ゲージが審判の値と食い違うと、押しても出ない技が生まれる。 */
+  if (B.g) {
+    for (const r of B.g) {
+      const x = world.fighters[r[0]];
+      if (!x) continue;
+      x.sp = r[1]; x.skillCd = r[2]; x.spExhaust = r[5];
+      if (x.def.id === 'itoha') x.hookCharge = r[3];
+      if (x.def.id === 'soshi') x.accelCharge = r[4];
+    }
+  }
   let n = 0;
   for (let i = 0; i < world.fighters.length; i++) {
     const x = world.fighters[i];
@@ -14532,7 +14577,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v200';
+const GAME_VERSION = 'v201';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14857,11 +14902,28 @@ animate();
 if (typeof location !== 'undefined' && /(?:^|[?&])probe=1(?:&|$)/.test(location.search || '')) {
   window.__probe = {
     ver: GAME_VERSION,
-    join(name) { netConnect(selectedChar || 'takeru', name || 'probe'); },
+    join(name, ch) { netConnect(ch || selectedChar || 'takeru', name || 'probe'); },
     key(code, down) { world.keys[code] = !!down; },
+    /* ★v201: 押した瞬間の操作。実際のボタンと同じ入り口を叩く。 */
+    act(name) {
+      if (name === 'jump') { world.wantJump = true; world.jumpHeld = true; }
+      else if (name === 'jumpUp') world.jumpHeld = false;
+      else if (name === 'skill') { world.wantSkill = true; world.skillHeld = true; }
+      else if (name === 'skillUp') world.skillHeld = false;
+      else if (name === 'ult') world.wantUlt = true;
+      else if (name === 'dash') world.wantDash = true;
+      else if (name === 'atk') world.player.attackHeld = true;
+      else if (name === 'atkUp') world.player.attackHeld = false;
+    },
     state() {
       const p = world.player;
       return {
+        ropeT: p ? +(p.ropeT || 0).toFixed(2) : null,
+        grounded: p ? !!p.grounded : null,
+        sp: p ? Math.round(p.sp || 0) : null,
+        skillCd: p ? +(p.skillCd || 0).toFixed(2) : null,
+        lv: p ? p.level : null,
+        ch: p ? p.def.id : null,
         ver: GAME_VERSION,
         running: !!world.running,
         netOn: !!net.on,

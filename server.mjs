@@ -201,6 +201,14 @@ async function makeRoom(members) {
   mod.startBattle(chars[0], map, seed, roster, -1);
   /* 人が座っている席だけ netInput を付ける = そこはAIが黙る */
   const room = { id, slot, mod, seed, map, roster, members, t: 0, snapAcc: 0, over: false, endT: 0 };
+  mod.world.onAct = (f, act, ok) => { try { watchAct(room, f, act, ok); } catch (e) {} };
+  /* 技を断った理由を、その席の人へ届ける。手元には isPlayer が居ても
+     判定をしているのは審判なので、審判が喋らないと理由は消える。 */
+  mod.world.onSay = (f, msg) => {
+    const m = room.members.find((x) => x && x.fighter === f);
+    if (!m || !m.sock.open) return;
+    try { m.sock.send(JSON.stringify({ t: 'say', m: String(msg).slice(0, 40) })); } catch (e) {}
+  };
   members.forEach((m, i) => {
     if (!m) return;
     m.room = room; m.slot = i;
@@ -358,6 +366,50 @@ function closeRoom(room, why) {
    ★だから審判が持っている物を全部並べる: 出た距離 / 想定 / 体の状態 / 近くの箱。
      ここで「箱なし・状態なし」と出たら、当たり判定でも技でもない何かが
      入力を捨てているということになり、探す場所が一段絞れる。 */
+/* その瞬間、体がどんな都合を抱えていたか。止まりも操作拒否も同じ物差しで見る。 */
+function stateTags(f) {
+  const st = [];
+  const on = (c, s) => { if (c) st.push(s); };
+  on(f.stunT > 0, '気絶' + (f.stunT || 0).toFixed(2));
+  on(!f.grounded, '空中');
+  on(f.ropeT >= 0, '糸');
+  on(f.vaultT >= 0, '乗り越え');
+  on((f.climbT || 0) > 0, '壁登り');
+  on((f.diveT || 0) > 0, '潜り');
+  on(f.blinkT >= 0, '瞬間移動');
+  on(f.rollerT >= 0 || f.rollerDropT >= 0 || f.rollerAiming, '落下奥義');
+  on((f.tsChargeT || 0) > 0, '時止め溜め');
+  on(f.swingT >= 0, '殴り');
+  on(!!f.attackHeld, '攻撃押し');
+  on(!!f.standOn, '構え');
+  on(!!f.crouch, 'しゃがみ');
+  on(!!f.inWater, '水');
+  on((f.spExhaust || 0) > 0, '息切れ');
+  on((f.skillCd || 0) > 0, '技待ち' + (f.skillCd || 0).toFixed(2));
+  on(f.knock && f.knock.lengthSq && f.knock.lengthSq() > 0.001, 'のけぞり');
+  on(f.airBullet && f.airBullet.life > 0, '空気弾');
+  return st;
+}
+
+/* ★★★v201: 押した瞬間の操作を審判が受け取り、通したか弾いたかを書き留める。
+   ★弾かれた時、手元には音も表示も出ない —— 利用者からは
+     「ジャンプもスキルも使えない」としか見えない。理由をここに残す。 */
+function watchAct(room, f, act, ok) {
+  const m = room.members.find((x) => x && x.fighter === f);
+  if (!m) return;                                  // CPUの操作は書かない
+  if (ok) {
+    room._actOk = (room._actOk || 0) + 1;
+    if (room._actOk % 8 !== 1) return;              // 通った物は間引いて残す
+  }
+  const d = f.def || {};
+  console.log(`[操作] ${m.name || '?'} 席${m.slot + 1} ${d.id} ${act} ${ok ? '通った' : '★弾いた'}`
+    + ` 精神${Math.round(f.sp || 0)}/技代${Math.round(room.mod.skillCostOf
+        ? room.mod.skillCostOf(d.id, f.level) : -1)}`
+    + ` 段${f.level}(技は段${d.skillLv || 1}から/奥義は段${d.ultLv || 1}から)`
+    + (d.id === 'itoha' ? ` フック残${(f.hookCharge || 0).toFixed(2)}` : '')
+    + ` 状態[${stateTags(f).join(' ') || 'なし'}]`);
+}
+
 function watchStuck(room, m, dt) {
   const f = m.fighter;
   const n = f && f.netInput;
@@ -374,23 +426,7 @@ function watchStuck(room, m, dt) {
   else m._stuckT = 0;
   if (m._stuckT < 0.5 || m._stuckCd > 0) return;
   m._stuckCd = 6; m._stuckT = 0;
-  const st = [];
-  const on = (c, s) => { if (c) st.push(s); };
-  on(f.stunT > 0, '気絶' + (f.stunT || 0).toFixed(2));
-  on(f.vaultT >= 0, '乗り越え');
-  on(f.ropeT >= 0, 'ロープ');
-  on((f.climbT || 0) > 0, '壁登り');
-  on((f.diveT || 0) > 0, '潜り');
-  on(f.blinkT >= 0, '瞬間移動');
-  on(f.rollerT >= 0 || f.rollerDropT >= 0 || f.rollerAiming, '落下奥義');
-  on(f.swingT >= 0, '殴り');
-  on(!!f.attackHeld, '攻撃押し');
-  on(!!f.standOn, '構え');
-  on(!!f.crouch, 'しゃがみ');
-  on(!f.grounded, '空中');
-  on(!!f.inWater, '水');
-  on(f.knock && f.knock.lengthSq() > 0.001, 'のけぞり');
-  on(f.airBullet && f.airBullet.life > 0, '空気弾');
+  const st = stateTags(f);
   let boxes = [];
   try { boxes = room.mod.bbBlockers(f, 3) || []; } catch (e) {}
   console.log(`[止まり] ${m.name || '?'} 席${m.slot + 1} ${room.map}`
