@@ -14795,6 +14795,7 @@ if (typeof location !== 'undefined' && /(?:^|[?&])probe=1(?:&|$)/.test(location.
         hp: p ? Math.round(p.hp) : null,
         alive: p ? !!p.alive : null,
         gap: p ? bbGap(p) : null,
+        bT: net.bT || 0,
       };
     },
   };

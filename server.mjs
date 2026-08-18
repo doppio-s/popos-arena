@@ -352,17 +352,27 @@ function closeRoom(room, why) {
 
 /* ---------- 全体の時計 ---------- */
 let lastMs = Date.now();
+let tickAcc = 0;
 setInterval(() => {
   const now = Date.now();
   let wall = (now - lastMs) / 1000;
   lastMs = now;
   /* ★v196: 重い時に 0.05 で切ると、ゲーム時間が実時間より遅れる。
      手元は60fpsで歩き、サーバーはスポーン付近のまま → 3mで引き戻される。
-     遅れ分は 0.05秒コマを最大5回まで追いつかせる。 */
+     遅れ分は 0.05秒コマを追いつかせる。
+     ★★v197: 50msおきに起きる作りだと、混んでいる時に起きるのが遅れ、
+       【1回で5コマまとめて進めて写しも1通だけ】になる。受け側から見ると
+       写しの間隔が 50ms と 250ms を行き来する = 止まって追いつくの繰り返し。
+       さらに、まとめ進めの間は古い入力が使われ続けるので、
+       スティックを離しても数m滑る。
+       10msおきに様子を見て、溜まった分だけ 0.05秒コマを進める形にした。
+       1回で進めるのは2コマまで —— 上限を大きくすると、まとめ進めが戻ってくる。 */
   if (wall > 0.25) wall = 0.25;
   const step = 1 / TICK_HZ;
-  let n = Math.max(1, Math.round(wall / step));
-  if (n > 5) n = 5;
+  tickAcc += wall;
+  let n = 0;
+  while (tickAcc >= step && n < 2) { tickAcc -= step; n++; }
+  if (!n) return;
   for (let k = 0; k < n; k++) {
     globalThis.__advanceClock(step * 1000);
     for (const room of [...rooms.values()]) {
@@ -377,7 +387,9 @@ setInterval(() => {
     /* 写しを配る */
     room.snapAcc += dt;
     if (room.snapAcc >= 1 / SNAP_HZ) {
-      room.snapAcc = 0;
+      /* ★v197: 0 に戻すと余りを捨てるので、配る間隔が少しずつ伸びる。差し引きにする。 */
+      room.snapAcc -= 1 / SNAP_HZ;
+      if (room.snapAcc > 1 / SNAP_HZ) room.snapAcc = 0;
       const snap = room.mod.snapshotWorld();
       const msg = JSON.stringify({ t: 'snap', ...snap });
       for (const m of room.members) if (m && m.sock.open) m.sock.send(msg);
@@ -420,7 +432,7 @@ setInterval(() => {
     /* 誰も居なくなった部屋は畳む */
     if (!room.members.some((m) => m && m.sock.open)) closeRoom(room, '無人');
   }
-}, 1000 / TICK_HZ);
+}, 10);
 
 /* ---------- 待合室(マッチング) ---------- */
 let waitT = 0;
