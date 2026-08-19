@@ -13389,6 +13389,9 @@ function netMeasureError(snap) {
   const ex = rb[1] - past.x, ey = rb[2] - past.y, ez = rb[3] - past.z;
   const eh = Math.hypot(ex, ez);
   if (eh > NET_FIX_SNAP || Math.abs(ey) > NET_FIX_SNAP) {
+    if (globalThis.__snapLog) globalThis.__snapLog.push({ t: world.matchT, eh, hp: p.hp,
+      knock: p.knock && p.knock.length ? +p.knock.length().toFixed(1) : 0,
+      dash: p.dashT > 0 ? 1 : 0, vault: p.vaultT >= 0 ? 1 : 0, air: p.grounded ? 0 : 1 });
     p.pos.x += ex; p.y += ey; p.pos.z += ez;
     p.vy = 0;
     pushOut(p.pos, 0.55, p.y, p);
@@ -13401,14 +13404,14 @@ function netMeasureError(snap) {
     net.fixSnaps = (net.fixSnaps | 0) + 1;
     return;
   }
-  /* ★★v204: スティックを倒している間は小さなずれを返さない。
-     返している最中に手元の壁とサーバーの壁が1cmでも違うと、
-     「見えない壁に当たって戻される」になる。走っている間は手元を信じる。 */
-  if ((net.lastMag || 0) > 0.25) {
-    net.fix = null;
-    net.fixErr = eh;
-    return;
-  }
+  /* ★★★v207 #422: v204は「走行中はズレを一切返さない」だったが、
+     走って曲がるだけで毎秒0.3mほどズレが【溜まり続け】、3mに達した瞬間
+     ハードスナップで一気に引き戻されていた(綺麗な回線でも約10秒に1回を実測)。
+     利用者「いまだ場所が戻される」の正体。
+     ★いまは #420 で町も出現も審判と一致しているので、v204が恐れた
+       「壁の1cm差と喧嘩する」前提が消えた。走行中も返してよい。
+     ★ただし返す速さは下の netDrainError で歩く速さの2割までに絞る =
+       体感はわずかな重さだけで、ドカンは二度と来ない。 */
   const f = net.fix || (net.fix = { x: 0, y: 0, z: 0 });
   f.x = eh > NET_FIX_DEAD ? ex : 0;
   f.z = eh > NET_FIX_DEAD ? ez : 0;
@@ -13420,7 +13423,15 @@ function netDrainError(dt) {
   if (!f || !p) return;
   if (Math.hypot(f.x, f.z) < 0.01 && Math.abs(f.y) < 0.01) { net.fix = null; return; }
   const k = clamp(dt * NET_FIX_BACK, 0, 1);
-  const cx = f.x * k, cy = f.y * k, cz = f.z * k;
+  let cx = f.x * k, cy = f.y * k, cz = f.z * k;
+  /* ★v207 #422: 操作中は返す速さを 1.5m/s(歩きの2割)までに絞る。
+     ズレの育ち(実測 約0.3m/s)より速いので溜まらず、体感もほぼ出ない。 */
+  if ((net.lastMag || 0) > 0.25) {
+    const ch = Math.hypot(cx, cz), cap = 1.5 * dt;
+    if (ch > cap && ch > 0) { const sc = cap / ch; cx *= sc; cz *= sc; }
+    const capY = 1.0 * dt;
+    if (Math.abs(cy) > capY) cy = Math.sign(cy) * capY;
+  }
   p.pos.x += cx; p.pos.z += cz; p.y += cy;
   /* ★v206 #421: 少しずつ返す方も同じ —— 動かしたぶんは控えにも足す(二重取り防止) */
   const hh = net.hist;
@@ -14787,7 +14798,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v206';
+const GAME_VERSION = 'v207';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

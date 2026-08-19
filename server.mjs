@@ -485,6 +485,19 @@ setInterval(() => {
   for (const room of [...rooms.values()]) {
     room.t += dt;
     /* 写しを配る */
+    /* ★★v207 #423: 回線が詰まって入力が0.35秒来ない席は【その場で足を止める】。
+       止めないと、詰まりの間じゅう審判の中の体だけが最後の向きへ走り続け、
+       回復した瞬間に3m超のズレ=強制引き戻しになる(揺らぎ試験で実測)。
+       0.35秒×走り7.6m/s=2.7m なので、止めれば引き戻しの線(3m)を越えない。 */
+    { const nowIn = Date.now();
+      for (const mb of room.members) {
+        if (!mb || !mb.fighter || !mb.fighter.netInput) continue;
+        if (mb.lastInT && nowIn - mb.lastInT > 350) {
+          const ni = mb.fighter.netInput;
+          ni.mx = 0; ni.mz = 0; ni.atk = false; ni.skillHeld = false;
+        }
+      }
+    }
     room.snapAcc += dt;
     if (room.snapAcc >= 1 / SNAP_HZ) {
       /* ★v197: 0 に戻すと余りを捨てるので、配る間隔が少しずつ伸びる。差し引きにする。 */
@@ -645,6 +658,7 @@ attachWs(server, {
     } else if (m.t === 'in') {
       const n = c.fighter && c.fighter.netInput;
       if (!n) return;
+      c.lastInT = Date.now();   /* ★v207 #423: 最後に入力が届いた時刻 */
       /* ★v170 #341: 送られてくる数は【必ず有限で、決めた範囲に収める】。
          ★NaN や Infinity が1つ入るだけで、その人の座標が壊れて
            世界じゅうの計算(距離・エリア・当たり)が NaN に染まる。 */
