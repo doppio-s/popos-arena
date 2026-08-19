@@ -111,6 +111,15 @@
   @keyframes annPop { 0% { opacity: 0; transform: scale(.6); } 12% { opacity: 1; transform: scale(1.08); } 22% { transform: scale(1); } 78% { opacity: 1; } 100% { opacity: 0; transform: scale(1.02); } }
   #minimap { position: absolute; right: 12px; bottom: 236px; width: 150px; height: 150px; border-radius: 50%; border: 2px solid rgba(150,180,255,.4); background: rgba(8,10,24,.68); }
   @media (min-width: 900px) { #minimap { bottom: 14px; right: 250px; } }
+  /* ★v210 #429: ミニマップの置き場所(設定で選ぶ) */
+  #minimap.mmLB { left: 12px; right: auto; bottom: 236px; top: auto; }
+  #minimap.mmRT { right: 12px; left: auto; top: 96px; bottom: auto; }
+  #minimap.mmLT { left: 12px; right: auto; top: 190px; bottom: auto; }
+  @media (min-width: 900px) {
+    #minimap.mmLB { left: 250px; right: auto; bottom: 14px; top: auto; }
+    #minimap.mmRT { right: 14px; left: auto; top: 96px; bottom: auto; }
+    #minimap.mmLT { left: 14px; right: auto; top: 150px; bottom: auto; }
+  }
   #hitFlash { position: fixed; inset: 0; background: radial-gradient(ellipse at center, transparent 40%, rgba(255, 30, 30, .45) 100%); opacity: 0; pointer-events: none; z-index: 30; transition: opacity .08s; }
   #tsOverlay { position: fixed; inset: 0; background: radial-gradient(ellipse at center, rgba(60, 80, 200, .08) 0%, rgba(8, 12, 44, .58) 100%); opacity: 0; transition: opacity .35s; pointer-events: none; z-index: 28; }
   #breathWrap { position: absolute; left: 50%; transform: translateX(-50%); bottom: 148px;
@@ -343,6 +352,10 @@
     <div class="cfgRow"><label>横(左右)</label><input id="cfgSens" type="range" min="0.3" max="3" step="0.05"><span class="cfgVal" id="cfgSensV"></span></div>
     <div class="cfgRow"><label>縦(上下)</label><input id="cfgSensY" type="range" min="0.3" max="3" step="0.05"><span class="cfgVal" id="cfgSensYV"></span></div>
     <div class="cfgRow"><label>上下を反転</label><input id="cfgInvert" type="checkbox"><span class="cfgVal"></span></div>
+    <div class="cfgRow"><label>ミニマップの位置</label><select id="cfgMmPos">
+      <option value="rb">右下</option><option value="lb">左下</option>
+      <option value="rt">右上</option><option value="lt">左上</option>
+    </select><span class="cfgVal"></span></div>
     <div class="cfgRow"><label>精密照準中の減速</label><input id="cfgFocus" type="range" min="0" max="0.8" step="0.05"><span class="cfgVal" id="cfgFocusV"></span></div>
     <div class="cfgNote">攻撃スティックの感度も同じ設定で動く(v42から視点と同じ仕組みを通っているため)。</div>
   </div>
@@ -828,8 +841,8 @@ const GRIP_RAGE_REGEN = 420;
 const BLADE_RATE = 1.30;       
 const BLADE_NEEDLE = 150;      
 const BLADE_NEEDLE_N = 20;     
-const BLADE_NEEDLE_WIND = 1.6; 
-const BLADE_NEEDLE_T = 1.1;    
+const BLADE_NEEDLE_WIND = 0.35; /* ★v210 #433: 利用者の注文で速射化(旧1.6) */
+const BLADE_NEEDLE_T = 0.5;    /* ★v210 #433: 剛速球の連射感(旧1.1) */
 const BLADE_NEEDLE_EVERY = BLADE_NEEDLE_T / BLADE_NEEDLE_N;
 const BLADE_NEEDLE_RANGE = 200;  
 const BLADE_NEEDLE_R = 1.5;    
@@ -1097,7 +1110,7 @@ const CHAR_DEFS = {
   kenya: {
     id: 'kenya', name: 'ケンヤ', ghost: 'ミラーランサー', emoji: '⚔️',
     colorMain: 0x8f9aa8, colorAccent: 0xf0f4ff, ghostColor: 0xcfd8ff, headProp: 'spike',
-    desc: '剣の騎士。近接で最速級の刺突ラッシュを刻み、「剣さばき」は正面の攻撃を受け止めて飛び道具を撃ち返す。奥義「剣針飛ばし」は溜めが長いかわりに、壁ごと貫いてマップの端まで届く。スタンドを出している間は足も速い。',
+    desc: '剣の騎士。近接で最速級の刺突ラッシュを刻み、「剣さばき」は正面の攻撃を受け止めて飛び道具を撃ち返す。奥義「剣針飛ばし」は一瞬の構えから、壁ごと貫いてマップの端まで届く。スタンドを出している間は足も速い。',
     stats: { hp: 1000, speed: 7.4, atk: 1.03, range: 12.5, rate: BLADE_RATE },   
     ultLv: 6, skillLv: 1,          
     lvBonus: { 2: { spSet: 1.20, note: '精神ゲージが20%延びた' },
@@ -1106,8 +1119,8 @@ const CHAR_DEFS = {
     diff: 3,
     skillDesc: '正面の攻撃を受け止め、飛び道具は撃ち返す',
     skillDescEn: 'Catch frontal attacks; reflect projectiles',
-    ultDesc: '長い溜めのあと、壁ごと貫いてマップの端まで届く針を飛ばす',
-    ultDescEn: 'After a long charge, fires needles that pierce walls to the map edge',
+    ultDesc: '一瞬の構えから、壁ごと貫く剛速の針を連射する',
+    ultDescEn: 'Instantly unleashes piercing needles that reach the map edge',
     skillName: '剣さばき', skillCd: 0.8,   
     ultIcon: 'blade',
     ultName: 'ニードルストーム', ultUses: 1,
@@ -3360,6 +3373,7 @@ const VAULT_SIDE = 0.3;
 const VAULT_DY   = 1.3;    
 const VAULT_DUR  = 0.46;   
 const VAULT_IN   = 1.9;    
+const VAULT_WIND = 0.7;    /* ★v210 #431: 突き破り前の振りかぶり(秒) */
 const VAULT_ARC  = 0.8;    
 function findVaultWindow(f) {
   if (!f || !f.alive) return null;
@@ -6120,6 +6134,8 @@ class Fighter {
     this.blinkT = -1;       
     this.blinkDir = null;   
     this.vaultT = -1;
+    this.vaultWindT = 0;        /* ★v210 #431 */
+    this.vaultPlanWin = null;
     this.vaultFrom = null;
     this.vaultTo = null;
     this.vaultWin = null;
@@ -6524,9 +6540,11 @@ class Fighter {
       if (!this.canSustain(shotCost)) { this.rushTimer = 0.3; if (this.isPlayer) spWarn(); return; }
       this.rushTimer = shotIntervalOf(this.def.id) / this.rateMult;
       this.spendSp(shotCost);
-      const muzX = this.astral ? this.astralPos.x : this.pos.x;
-      const muzY = this.astral ? this.astralPos.y : this.y + 1.3;
-      const muzZ = this.astral ? this.astralPos.z : this.pos.z;
+      /* ★v210 #432: 幽体の弾は【突き出した右腕の先】から出る(見た目と一致させる) */
+      const _af = this.astralFacing;
+      const muzX = this.astral ? this.astralPos.x + Math.sin(_af) * 0.95 + Math.cos(_af) * 0.22 : this.pos.x;
+      const muzY = this.astral ? this.astralPos.y + 0.32 : this.y + 1.3;
+      const muzZ = this.astral ? this.astralPos.z + Math.cos(_af) * 0.95 - Math.sin(_af) * 0.22 : this.pos.z;
       let dir;
       if (this.isPlayer || this.netInput) {
         {
@@ -7242,11 +7260,28 @@ class Fighter {
     return true;
   }
   startVault(w) {
-    if (!this.alive || this.vaultT >= 0) return false;
+    /* ★★v210 #431: 突き破りに【振りかぶり】を付けた(利用者の注文: 0.7秒くらい)。
+       腕を大きく振り上げてから叩き割る。実行はVAULT_WIND後の_vaultGo。
+       ★両世界とも同じ入力から同じ0.7秒を数えるので、オンライン照合はズレない。 */
+    if (!this.alive || this.vaultT >= 0 || this.vaultWindT > 0) return false;
     if (this.stunT > 0 || this.astral) return false;
     if (this.tsChargeT > 0 || this.rollerT >= 0) return false;
     if (!w) w = findVaultWindow(this);
     if (!w) return false;
+    { const dx0 = this.pos.x - w.cx, dz0 = this.pos.z - w.cz;
+      if (Math.abs(dx0 * w.nx + dz0 * w.nz) < 0.08) return false; }
+    this.vaultWindT = VAULT_WIND;
+    this.vaultPlanWin = w;
+    this.facing = Math.atan2(w.cx - this.pos.x, w.cz - this.pos.z);
+    this.swingT = -1; this.swingDone = true;
+    this.blockHold = false;
+    sfx.dash(0.45 * (this.isPlayer ? 1 : volAt(this.pos)));
+    return true;
+  }
+  _vaultGo() {
+    const w = this.vaultPlanWin;
+    this.vaultPlanWin = null;
+    if (!w || !this.alive || this.stunT > 0 || this.astral) return false;
     const dx = this.pos.x - w.cx, dz = this.pos.z - w.cz;
     const along = dx * w.nx + dz * w.nz;
     if (Math.abs(along) < 0.08) return false;
@@ -7288,6 +7323,14 @@ class Fighter {
       else this.shotBloom = Math.max(0, this.shotBloom - GUN_BLOOM_COOL * dt);
     }
     this.skillCd = Math.max(0, this.skillCd - dt);
+    /* ★v210 #431: 振りかぶり中 —— 足を止め、時間が来たら叩き割る */
+    if (this.vaultWindT > 0) {
+      this.vaultWindT -= dt;
+      this.moveDir.set(0, 0, 0);
+      this.attackHeld = false;
+      if (this.stunT > 0 || !this.alive) { this.vaultWindT = 0; this.vaultPlanWin = null; }
+      else if (this.vaultWindT <= 0) { this.vaultWindT = 0; this._vaultGo(); }
+    }
     this.ultCd = Math.max(0, this.ultCd - dt);
     this.dashCd = Math.max(0, this.dashCd - dt);
     if (this.dashT > 0 && (this.isPlayer || volAt(this.pos) > 0.12)) {
@@ -7357,7 +7400,8 @@ class Fighter {
       const raging = (this.def.id === 'gou' && this.rageT > 0);
       const sinceSpend = spRegenDelayOf(this.def.id) - this.spRegenDelay;
       const standReady = this.standOn && sinceSpend >= SP_REGEN_STAND_DELAY;
-      if ((this.spRegenDelay <= 0 || raging || standReady) && this.sp < this.maxSp) {
+      /* ★v210 #434: ガード(受け)中は精神力が回復しない(利用者の注文) */
+      if ((this.spRegenDelay <= 0 || raging || standReady) && this.sp < this.maxSp && !this.blockHold) {
         let rate = this.standOn ? spRegenStandOf(this.def.id)          
           : (this.spRegenDelay <= 0 ? spRegenOf(this.def.id) : 0);
         if (raging) rate = Math.max(rate, GRIP_RAGE_REGEN);
@@ -7596,6 +7640,12 @@ class Fighter {
       p.armL.rotation.x = sw * 0.3;
     } else if ((this.attackHeld || this.swingT >= 0) && this.level >= 1) {
       p.armR.rotation.x = -0.9 + Math.sin(this.walkT * 6) * 0.15;
+      if (this.vaultWindT > 0) {
+        /* ★v210 #431: 0.7秒かけて右腕を大きく後ろへ振り上げる */
+        const k = clamp(1 - this.vaultWindT / VAULT_WIND, 0, 1);
+        p.armR.rotation.x = -0.6 - k * 2.6;
+        p.armR.rotation.z = -0.25 - k * 0.35;
+      }
       p.armL.rotation.x = -0.9 - Math.sin(this.walkT * 6) * 0.15;
     } else {
       p.armL.rotation.x = -sw * 0.8;
@@ -7775,11 +7825,13 @@ class Fighter {
       for (const m of (g.userData.mats || [])) m.opacity = m._baseOp;
       const pa = g.userData.parts;
       const t = performance.now() * 0.004;
-      pa.armL.rotation.x = -1.1 + Math.sin(t) * 0.12;
-      pa.armR.rotation.x = -1.1 - Math.sin(t) * 0.12;
-      pa.armL.rotation.z = 0.2; pa.armR.rotation.z = -0.2;
+      /* ★v210 #432: 右腕を真っ直ぐ前へ突き出す構え(弾はこの腕の先から出る)。
+         左腕はわずかに後ろへ引いて輪郭を立てる。 */
+      pa.armL.rotation.x = -0.55 + Math.sin(t) * 0.08;
+      pa.armR.rotation.x = -1.62 - Math.sin(t) * 0.03;
+      pa.armL.rotation.z = 0.3; pa.armR.rotation.z = -0.06;
       pa.armL.scale.y = 1; pa.armR.scale.y = 1; 
-      pa.elbowL.rotation.x = -0.2; pa.elbowR.rotation.x = -0.2;
+      pa.elbowL.rotation.x = -0.35; pa.elbowR.rotation.x = -0.04;
       pa.legL.rotation.x = 0.45; pa.legR.rotation.x = 0.25;
       if (pa.prop) pa.prop.rotation.z += dt * 34;      
       return;
@@ -8072,6 +8124,7 @@ function defaultCfg() {
     btnScale: 1,      
     btnPos: {},       
     perfHud: false,   
+    mmPos: 'rb',      /* ★v210 #429: ミニマップの角 rb/lb/rt/lt */
     gfx: 'auto',      
     keys,
   };
@@ -8085,7 +8138,8 @@ function normalizeCfg(raw) {
   d.invertY = raw.invertY === true;
   d.focusSlow = clampN(raw.focusSlow, 0, 0.8, 0.45);
   d.btnScale = clampN(raw.btnScale, 0.7, 1.6, 1);
-  d.perfHud = raw.perfHud === true;                                   
+  d.perfHud = raw.perfHud === true;
+  d.mmPos = ['rb', 'lb', 'rt', 'lt'].includes(raw.mmPos) ? raw.mmPos : 'rb';                                   
   d.gfx = (raw.gfx === 'high' || raw.gfx === 'light') ? raw.gfx : 'auto';   
   if (raw.btnPos && typeof raw.btnPos === 'object') {
     for (const id of BTN_IDS) {
@@ -8916,6 +8970,7 @@ function updateVault(f, dt) {
 }
 function clearVault(f) {
   f.vaultT = -1;
+  f.vaultWindT = 0; f.vaultPlanWin = null;   /* ★v210 #431 */
   f.vaultFrom = null;
   f.vaultTo = null;
   f.vaultWin = null;
@@ -12102,6 +12157,8 @@ function updateOrbPickups(dt, only) {
     let taken = false;
     for (const f of pickers) {
       if (!f.alive) continue;
+      /* ★v210 #430: 流しの刺客は魂のチップを拾わない(人と競合させない) */
+      if (f.isMob && o.type === 'soul') continue;
       if (Math.abs(f.y - o.baseY) > 1.4) continue;
       const d = Math.hypot(f.pos.x - o.mesh.position.x, f.pos.z - o.mesh.position.z);
       if (d < 1.15) {
@@ -12788,13 +12845,14 @@ function updateCamera(dt) {
   let rs = camShoulderX(dist, newFov, camera.aspect, sndc);
   let sy = ast ? CAM_SHOULDER_Y * 0.6 : CAM_SHOULDER_Y;
   const dive = (!ast && p.groundAim) ? p.groundAim : null;
-  const bx = ast ? p.astralPos.x : (dive ? dive.x : p.pos.x);
+  /* ★v210 #432: 幽体中は注視点をわずかに右へ = 幽体は画面のやや左、突き出した右腕が中央に来る */
+  const bx = ast ? p.astralPos.x + Math.cos(yaw) * 0.55 : (dive ? dive.x : p.pos.x);
   if (world.camFootY === undefined || !p.alive || !p.grounded || p.rollerHidden) world.camFootY = p.y;
   else world.camFootY += (p.y - world.camFootY) * (1 - Math.exp(-CAM_STEP_SMOOTH * dt));
   const footY = ast ? p.y : world.camFootY;
   const by = ast ? p.astralPos.y + 0.55
     : (dive ? dive.y + 1.7 : footY + 1.7 - 0.1 * fo - CROUCH_CAM_DROP * (p.crouchT || 0));
-  const bz = ast ? p.astralPos.z : (dive ? dive.z : p.pos.z);
+  const bz = ast ? p.astralPos.z - Math.sin(yaw) * 0.55 : (dive ? dive.z : p.pos.z);
   if (!ast) {
     const st = camFreeT(bx, by, bz, bx + Math.cos(yaw) * rs, by + sy, bz - Math.sin(yaw) * rs);
     rs *= st; sy *= st;
@@ -12859,6 +12917,16 @@ function updateCamera(dt) {
   }
 }
 const mmCtx = ($('minimap') && $('minimap').getContext) ? $('minimap').getContext('2d') : null;
+/* ★v210 #429: 設定に合わせてミニマップの角を変える */
+function applyMmPos() {
+  const el = $('minimap');
+  if (!el || !el.classList) return;
+  el.classList.remove('mmLB', 'mmRT', 'mmLT');
+  const v = (world.cfg && world.cfg.mmPos) || 'rb';
+  if (v === 'lb') el.classList.add('mmLB');
+  else if (v === 'rt') el.classList.add('mmRT');
+  else if (v === 'lt') el.classList.add('mmLT');
+}
 let hudT = 0;
 function refreshHud(dt) {
   const p = world.player;
@@ -14586,6 +14654,7 @@ bindBtn('vaultBtn', () => { world.wantVault = true; });
   if (_bbEl) _bbEl.addEventListener('click', () => { bb.hidden = true; _bbEl.classList.add('hidden'); }); }
 bindBtn('crouchBtn', () => { world.wantCrouch = true; }, () => { world.wantCrouch = false; });
 world.cfg = loadCfg();
+applyMmPos();   /* ★v210 #429: 保存されたミニマップの角を起動時に反映 */
 world.keyMap = keyActionMap(world.cfg);
 let cfgCaptureAction = null;      
 let btnMoveMode = false;
@@ -14655,6 +14724,7 @@ function cfgSyncUI() {
   set('cfgSens', c.sens); txt('cfgSensV', c.sens.toFixed(2) + 'x');
   set('cfgSensY', c.sensY); txt('cfgSensYV', c.sensY.toFixed(2) + 'x');
   const inv = $('cfgInvert'); if (inv) inv.checked = c.invertY;
+  const mp = $('cfgMmPos'); if (mp) mp.value = c.mmPos || 'rb';
   set('cfgFocus', c.focusSlow); txt('cfgFocusV', Math.round(c.focusSlow * 100) + '%');
   set('cfgBtnScale', c.btnScale); txt('cfgBtnScaleV', c.btnScale.toFixed(2) + 'x');
   set('cfgGfx', c.gfx || 'auto');
@@ -14731,6 +14801,11 @@ onRange('cfgSens', 'sens');
 onRange('cfgSensY', 'sensY');
 onRange('cfgFocus', 'focusSlow');
 onRange('cfgBtnScale', 'btnScale');
+{ const mpEl = $('cfgMmPos'); if (mpEl && mpEl.addEventListener) mpEl.addEventListener('change', () => {
+  world.cfg.mmPos = mpEl.value;
+  applyMmPos();
+  cfgCommit();
+}); }
 $('cfgInvert').addEventListener('change', () => {
   world.cfg.invertY = !!$('cfgInvert').checked;
   cfgCommit();
@@ -14856,7 +14931,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v209';
+const GAME_VERSION = 'v210';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
