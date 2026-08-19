@@ -6542,12 +6542,10 @@ class Fighter {
       if (!this.canSustain(shotCost)) { this.rushTimer = 0.3; if (this.isPlayer) spWarn(); return; }
       this.rushTimer = shotIntervalOf(this.def.id) / this.rateMult;
       this.spendSp(shotCost);
-      /* ★v210 #432: 幽体の弾は【突き出した右腕の先】から出る(見た目と一致させる) */
-      const _af = this.astralFacing;
-      const muzX = this.astral ? this.astralPos.x + Math.sin(_af) * 0.95 + Math.cos(_af) * 0.22 : this.pos.x;
-      const muzY = this.astral ? this.astralPos.y + 0.32 : this.y + 1.3;
-      const muzZ = this.astral ? this.astralPos.z + Math.cos(_af) * 0.95 - Math.sin(_af) * 0.22 : this.pos.z;
-      let dir;
+      /* ★v212 #435: 幽体の弾は【突き出した右腕の拳の先】から出る。
+         肩(右0.47・高さ1.47)+伸ばした腕0.78を体格1.25倍で実寸化。
+         先に向きを確定してから銃口を置く(振り向き直後の1発目も腕と一致)。 */
+      let dir = null, aiBest = null;
       if (this.isPlayer || this.netInput) {
         {
           const a0 = aimDirOf(this);
@@ -6557,6 +6555,25 @@ class Fighter {
           if (!this.astral) this.facing = Math.atan2(dir.x, dir.z);
           else this.astralFacing = Math.atan2(dir.x, dir.z);
         }
+      } else {
+        let bd2 = this.astral ? 26 : 20;
+        const bx = this.astral ? this.astralPos.x : this.pos.x;
+        const bz = this.astral ? this.astralPos.z : this.pos.z;
+        for (const t of targets) {
+          if (t === this || !t.alive) continue;
+          const dd = Math.hypot(t.pos.x - bx, t.pos.z - bz);
+          if (dd < bd2) { bd2 = dd; aiBest = t; }
+        }
+        if (aiBest) {
+          const ang = Math.atan2(aiBest.pos.x - bx, aiBest.pos.z - bz);
+          if (this.astral) this.astralFacing = ang; else this.facing = ang;
+        }
+      }
+      const _af = this.astral ? this.astralFacing : this.facing;
+      const muzX = this.astral ? this.astralPos.x + Math.sin(_af) * 1.08 + Math.cos(_af) * 0.52 : this.pos.x;
+      const muzY = this.astral ? this.astralPos.y + 1.90 : this.y + 1.3;
+      const muzZ = this.astral ? this.astralPos.z + Math.cos(_af) * 1.08 - Math.sin(_af) * 0.52 : this.pos.z;
+      if (dir) {
         const r = fighterAimRay(this, _aimRayA);
         let s = aimRayTravel(r.ox - this.pos.x, r.oz - this.pos.z, r.ux, r.uz, this.effRange());
         shotAimPoint(this, r, s, muzX, muzY, muzZ, _shotAim);
@@ -6568,23 +6585,13 @@ class Fighter {
             r.oy + r.dy * s - muzY,
             r.oz + r.uz * s - muzZ).normalize();
         }
+      } else if (aiBest) {
+        const ang2 = Math.atan2(aiBest.pos.x - muzX, aiBest.pos.z - muzZ);
+        const hd = Math.max(1, Math.hypot(aiBest.pos.x - muzX, aiBest.pos.z - muzZ));
+        const dy = clamp(((aiBest.y + 1.1) - muzY) / hd, -0.85, 0.85);
+        dir = new THREE.Vector3(Math.sin(ang2), dy, Math.cos(ang2));
       } else {
-        let best = null, bd2 = this.astral ? 26 : 20;
-        for (const t of targets) {
-          if (t === this || !t.alive) continue;
-          const dd = Math.hypot(t.pos.x - muzX, t.pos.z - muzZ);
-          if (dd < bd2) { bd2 = dd; best = t; }
-        }
-        if (best) {
-          const ang = Math.atan2(best.pos.x - muzX, best.pos.z - muzZ);
-          if (this.astral) this.astralFacing = ang; else this.facing = ang;
-          const hd = Math.max(1, Math.hypot(best.pos.x - muzX, best.pos.z - muzZ));
-          const dy = clamp(((best.y + 1.1) - muzY) / hd, -0.85, 0.85);
-          dir = new THREE.Vector3(Math.sin(ang), dy, Math.cos(ang));
-        } else {
-          const ang = this.astral ? this.astralFacing : this.facing;
-          dir = new THREE.Vector3(Math.sin(ang), 0, Math.cos(ang));
-        }
+        dir = new THREE.Vector3(Math.sin(_af), 0, Math.cos(_af));
       }
       let sprd = isHuman(this) ? SHOT_SPREAD : SHOT_SPREAD_AI;   
       if (this.def.id === 'dan') {
@@ -6623,7 +6630,8 @@ class Fighter {
         speed: SHOT_SPEED,
         life: this.def.stats.range / SHOT_SPEED, size: nara ? 0.11 : 0.13,
         color: nara ? 0xffd76a : 0x2fe86b, gem: !nara,
-        origin: this.astral ? this.astralPos : null,     
+        /* ★v212 #435: 弾の出現点も銃口(拳の先)に。以前はastralPosそのまま=足元の高さだった */
+        origin: this.astral ? new THREE.Vector3(muzX, muzY, muzZ) : null,
         noKnock: true,
       });
       }
@@ -11719,7 +11727,8 @@ function spawnProjectile(owner, dir, { dmg = 7, speed = 26, life = 0.9, color = 
   halo.rotation.x = -Math.asin(clamp(vel.y / vl, -1, 1));
   halo.position.set(-vel.x / vl * size * 2, -vel.y / vl * size * 2, -vel.z / vl * size * 2);
   group.add(halo);
-  if (origin) group.position.set(origin.x + dir.x * 0.8, origin.y, origin.z + dir.z * 0.8);
+  /* ★v212 #435: originは「銃口そのもの」として使う(以前はここでさらに0.8前へずらしていた) */
+  if (origin) group.position.set(origin.x, origin.y, origin.z);
   else group.position.set(owner.pos.x + dir.x * 0.8, owner.y + 1.3, owner.pos.z + dir.z * 0.8);
   scene.add(group);
   const _pr = { mesh: group, core, vel, owner, dmg, life, noKnock, decor, tiers,
@@ -13484,6 +13493,25 @@ function netMeasureError(snap) {
   if (!past) return;
   const ex = rb[1] - past.x, ey = rb[2] - past.y, ez = rb[3] - past.z;
   const eh = Math.hypot(ex, ez);
+  /* ★v212 #437b: 審判側が【先に】跳ぶ場合もある(構えの刻みが20Hzと60fpsで違うため、
+     どちらが先に構えを終えるかは毎回変わる)。審判の自分が1snapで2.5m超動いたら
+     それも瞬間移動とみなして、下と同じ猶予を張る。 */
+  const _sp0 = net._selfPrev || (net._selfPrev = { x: rb[1], y: rb[2], z: rb[3] });
+  const _svJump = Math.hypot(rb[1] - _sp0.x, rb[3] - _sp0.z) > 2.5 || Math.abs(rb[2] - _sp0.y) > 2.5;
+  _sp0.x = rb[1]; _sp0.y = rb[2]; _sp0.z = rb[3];
+  if (_svJump) {
+    net.warpSeq = net.seq | 0;
+    net.warpT = Math.max(net.warpT || 0, performance.now() + Math.min(1000, 400 + (net.ping || 0) * 1.5));
+  }
+  /* ★v212 #437: 瞬間移動ワザの直後は【誤差が1m未満に落ちるまで】ズレ測定を保留。
+     審判側は同じワザを構え(windup)込みで少し遅れて跳ぶので、その谷間の返事と
+     較べると20m級の偽ズレ→ドカン→また前へ、の二連ヤンクになる。
+     「審判が入力を消化したか(seq)」では跳んだかまでは分からない(構え時間がある)ため、
+     収束(eh<1m)だけを解除条件にし、往復遅れに応じた期限で必ず打ち切る。 */
+  if (net.warpSeq > 0) {
+    if (eh < 1.0 || performance.now() > net.warpT) { net.warpSeq = -1; }
+    else { net.fix = null; net.fixErr = 0; return; }
+  }
   if (eh > NET_FIX_SNAP || Math.abs(ey) > NET_FIX_SNAP) {
     if (typeof netBugReport === 'function') netBugReport('hardsnap', `eh=${eh.toFixed(1)} ey=${ey.toFixed(1)}`);
     if (globalThis.__snapLog) globalThis.__snapLog.push({ t: world.matchT, eh, hp: p.hp,
@@ -13722,11 +13750,19 @@ function netStart(m) {
       引きずり込まれる】= r10 のような高い部屋番号の正体。) */
   net.localSim = false;
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
+  /* ★v212 #436: 審判エンジンの版が手元と違う = 判定だけ古い(or新しい)状態。
+     v211で実際に起きた: HTMLは毎リクエスト読み直すのに、エンジンは起動時抽出のまま。
+     黙っていると「直したはずが直ってない」に見えるので、遊ぶ人に知らせて記録も残す。 */
+  if (m.sv && m.sv !== GAME_VERSION) {
+    try { announce(`⚠ サーバーの中身が古い(${m.sv})。サーバーを立ち上げ直してね`); } catch (e) {}
+    try { netBugReport('vermismatch', `sv=${m.sv} cl=${GAME_VERSION}`); } catch (e) {}
+  }
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   /* ★v199: 写しの棚と再生の時計を毎試合たたむ。持ち越すと最初の一瞬だけ飛ぶ。 */
   net.q = []; net.bBeat = 0; net.play = undefined;
   /* ★v203: 先読みの控えとずれも毎試合たたむ */
   net.hist = []; net.seq = 0; net.fix = null; net.fixErr = 0; net.fixSnaps = 0;
+  net.warpSeq = -1; net.warpT = 0; net._selfPrev = null;   /* ★v212 #437: 瞬間移動ワザの猶予 */
   net.fastFixT = 0; net._hpPrev = undefined;   /* ★v208 #424 */
   net.ev = [];   
   net.dmgPrev = [];                 
@@ -13794,6 +13830,19 @@ function netSendInput(dt) {
   const hist = net.hist || (net.hist = []);
   hist.push({ q: qn, x: p.pos.x, y: p.y, z: p.pos.z });
   while (hist.length > 120) hist.shift();
+  /* ★v212 #437: 1コマで1.2m超の移動 = 瞬間移動ワザ(まばたき・壁抜け・時飛ばし等)。
+     手元は押した瞬間に跳ぶが、審判は入力が届いてから跳ぶ。その谷間の返事と
+     較べると15m級の偽ズレ→ドカン→また前へ、の二連ヤンクになる(突っかかりの正体のひとつ)。
+     跳んだ番号を控えて、審判が追いつくまでズレ測定を保留する。 */
+  if (hist.length >= 2) {
+    const _ha = hist[hist.length - 2], _hb = hist[hist.length - 1];
+    if (Math.hypot(_hb.x - _ha.x, _hb.z - _ha.z) > 1.2 || Math.abs(_hb.y - _ha.y) > 1.2) {
+      net.warpSeq = qn;
+      /* 期限 = 400ms + 往復遅れ×1.5(遠い回線でも審判の跳びが返事に載るまで待てる)。上限1秒。 */
+      net.warpT = performance.now() + Math.min(1000, 400 + (net.ping || 0) * 1.5);
+      net.fix = null; net.fixErr = 0;
+    }
+  }
   net.ws.send(JSON.stringify({
     t: 'in',
     q: qn,
@@ -14932,7 +14981,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v211';
+const GAME_VERSION = 'v212';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

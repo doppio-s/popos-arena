@@ -35,6 +35,15 @@ const PORT = Number(process.argv[2] || process.env.PORT || 8080);
 process.chdir(HERE);
 await import('./build.mjs');
 
+/* ★v212 #436: エンジン版数を起動時に控える。HTMLは毎リクエスト読み直すが、
+   審判エンジンは起動時に抽出したまま —— ファイルだけ差し替えると
+   「配るHTMLは新しいのに判定は古い」が起きる(v211で実際に起きた)。
+   startにこの版数を同梱し、手元と違えば遊ぶ人へ知らせる。 */
+const ENGINE_VER = (() => {
+  try { return (fs.readFileSync(path.join(HERE, 'index.html'), 'utf8')
+    .match(/GAME_VERSION = '([^']+)'/) || [])[1] || '?'; } catch (e) { return '?'; }
+})();
+
 const ROOM_MAX = 8;            // 1部屋の人数(本家と同じ8人)
 /* ★★★v169 #336: 同時に立てられる部屋の数。★公開する前に必ず要る蓋 ——
    部屋は1つにつき60Hzの試合を丸ごと1つ回すので、無制限だと
@@ -219,7 +228,7 @@ async function makeRoom(members) {
       ax: NaN, ay: NaN, az: NaN, q: 0 };
     m.fighter = f;
     m.sock.send(JSON.stringify({ t: 'start', room: id, seed, map, slot: i, roster,
-      humans: members.filter(Boolean).length }));
+      humans: members.filter(Boolean).length, sv: ENGINE_VER }));
   });
   rooms.set(id, room);
   console.log(`[部屋] ${id} 開始 — 人${members.filter(Boolean).length}人 / CPU${ROOM_MAX - members.filter(Boolean).length}人 / ${map} / 種${seed}`);
@@ -306,7 +315,7 @@ function seatInto(room, seat, c) {
     ax: NaN, ay: NaN, az: NaN, q: 0 };
   const humans = room.members.filter((x) => x && x.sock && x.sock.open).length;
   c.sock.send(JSON.stringify({ t: 'start', room: room.id, seed: room.seed,
-    map: room.map, slot: seat, roster: room.roster, humans }));
+    map: room.map, slot: seat, roster: room.roster, humans, sv: ENGINE_VER }));
   for (const m of room.members) {
     if (!m || m === c || !m.sock || !m.sock.open) continue;
     try { m.sock.send(JSON.stringify({ t: 'humans', n: humans })); } catch (e) {}
@@ -753,6 +762,7 @@ attachWs(server, {
 
 server.listen(PORT, () => {
   console.log(`POPO'S LAST SURVIVOR サーバー起動 — http://localhost:${PORT}/`);
+  console.log(`  審判エンジンの版: ${ENGINE_VER} (index.html を差し替えたら立ち上げ直すこと)`);
   console.log(`  1部屋 ${ROOM_MAX}人 / ${FILL_WAIT_S}秒で埋まらなければCPUが埋める`);
   console.log(`  同時に立てられる部屋: ${ROOM_LIMIT}(環境変数 ROOMS で変えられる)`);
   console.log('  同じWi-Fiの人は  http://<このPCのIP>:' + PORT + '/  を開く');
