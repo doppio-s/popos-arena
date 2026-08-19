@@ -4389,12 +4389,30 @@ function bbRender() {
   e.innerHTML = h;
   e.classList.remove('hidden');
 }
+/* ★v209 #428: 詰まり検知が updatePlayer の書き残しに頼っていて、
+   その関数が早退・不走のコマでは【押しているのに検知しない】ことがあった。
+   検知器が鍵盤とスティックを自分で直接読む。 */
+function bbRawInput() {
+  try {
+    if (world.stick && world.stick.active) return Math.min(1, Math.hypot(world.stick.x, world.stick.y));
+    const k = world.keys || {};
+    const km = world.keyMap || {};
+    let ix = 0, iy = 0;
+    for (const code of Object.keys(k)) {
+      if (!k[code]) continue;
+      const a = km[code];
+      if (a === 'forward') iy -= 1; else if (a === 'back') iy += 1;
+      else if (a === 'left') ix -= 1; else if (a === 'right') ix += 1;
+    }
+    return Math.min(1, Math.hypot(ix, iy));
+  } catch (e) { return world._bbInput || 0; }
+}
 function bbUpdate(f, dt) {
   if (!f) return;
   bb.t += dt;
   bb.rateT += dt;
   if (bb.rateT >= 1) { bb.rate = (net.sentN | 0) - bb.sentPrev; bb.sentPrev = net.sentN | 0; bb.rateT = 0; }
-  const asking = (world._bbInput || 0) > 0.05;
+  const asking = Math.max(bbRawInput(), world._bbInput || 0) > 0.05;
   if (!f.alive || world.spectating || !asking) { bb.stuckT = 0; bb.armed = true; return; }
   const got = Math.hypot(f.pos.x - (bb.px === undefined ? f.pos.x : bb.px),
     f.pos.z - (bb.pz === undefined ? f.pos.z : bb.pz));
@@ -4402,6 +4420,11 @@ function bbUpdate(f, dt) {
   if (got < BB_MOVE * dt) bb.stuckT += dt;
   else { bb.stuckT = 0; bb.armed = true; }
   if (bb.stuckT >= BB_HOLD && bb.armed) { bb.armed = false; bbRecord(f, dt); }
+  /* ★v209 #427: 4秒詰まったら自動通報(押しているのに動けない) */
+  if (bb.stuckT >= 4 && !bb._sent4) { bb._sent4 = true;
+    if (typeof netBugReport === 'function') netBugReport('stuck4s',
+      `入力${(world._bbInput || 0).toFixed(2)} 接地${f.grounded ? 1 : 0} 技CD${(f.skillCd || 0).toFixed(1)}`); }
+  if (bb.stuckT < 0.5) bb._sent4 = false;
 }
 function pickEscapeDir(x, z, y, goalA, avoidA) {
   let bestA = goalA + Math.PI, bestS = -1e9;
@@ -13393,6 +13416,7 @@ function netMeasureError(snap) {
   const ex = rb[1] - past.x, ey = rb[2] - past.y, ez = rb[3] - past.z;
   const eh = Math.hypot(ex, ez);
   if (eh > NET_FIX_SNAP || Math.abs(ey) > NET_FIX_SNAP) {
+    if (typeof netBugReport === 'function') netBugReport('hardsnap', `eh=${eh.toFixed(1)} ey=${ey.toFixed(1)}`);
     if (globalThis.__snapLog) globalThis.__snapLog.push({ t: world.matchT, eh, hp: p.hp,
       knock: p.knock && p.knock.length ? +p.knock.length().toFixed(1) : 0,
       dash: p.dashT > 0 ? 1 : 0, vault: p.vaultT >= 0 ? 1 : 0, air: p.grounded ? 0 : 1 });
@@ -13537,6 +13561,23 @@ function netConnect(charId, name) {
     else netSetStatus('切れました', '「この名前で入る」でもう一度');
   };
   return ws;
+}
+/* ★★★v209 #427: 【利用者に報告させない】ための自動バグ通報。
+   異常(例外・詰まり・強制位置合わせ)を検知したら審判へ1行送る。
+   審判はファイルに書き溜め、開発側があとでまとめて読む。
+   ★1分に5件まで(送りすぎで回線の蓋 MSG_PER_SEC に触れない)。 */
+function netBugReport(kind, detail) {
+  try {
+    if (!net.on || !net.ws || net.ws.readyState !== 1) return;
+    const now = performance.now();
+    if (!net._bugT || now - net._bugT > 60000) { net._bugT = now; net._bugN = 0; }
+    if (++net._bugN > 5) return;
+    const p = world.player;
+    const pos = p ? `${p.pos.x.toFixed(1)},${p.y.toFixed(1)},${p.pos.z.toFixed(1)}` : '?';
+    net.ws.send(JSON.stringify({ t: 'bug', k: String(kind).slice(0, 24),
+      d: String(detail || '').slice(0, 220),
+      v: GAME_VERSION, m: net.map || world.mapId || '?', pos }));
+  } catch (e) {}
 }
 function netDisconnect() {
   const ws = net.ws;
@@ -14815,7 +14856,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v208';
+const GAME_VERSION = 'v209';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -15018,6 +15059,13 @@ $('toTitleBtn').addEventListener('click', () => {
 mountAd('title');
 applyLang();   
 { const lb = $('langBtn'); if (lb && lb.addEventListener) lb.addEventListener('click', () => { setLang(LANG === 'en' ? 'ja' : 'en'); if (typeof sfx !== 'undefined' && sfx.uiTap) sfx.uiTap(); }); }
+/* ★v209 #427: 画面の例外も自動通報(試合中のみ・重複は1分5件の蓋で抑制) */
+if (typeof addEventListener === 'function') {
+  addEventListener('error', (ev) => {
+    try { if (world && world.running && typeof netBugReport === 'function')
+      netBugReport('jserror', String(ev && ev.message || '').slice(0, 200)); } catch (e) {}
+  });
+}
 let lastT = performance.now();
 let waterT = 0;
 function updateWater(dt) {

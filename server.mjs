@@ -705,6 +705,26 @@ attachWs(server, {
         + ` 待ち${num(m.stv, 100)}%`
         + ` 往復${num(m.rtt, 99999)}ms`
         + ` 先読みのずれ${num(m.fx, 99999)}cm 合わせ直し${num(m.sn, 9999)}回`);
+    } else if (m.t === 'bug') {
+      /* ★★v209 #426: 遊んでいる人の画面が検知した異常を書き溜める。
+         利用者に「いちいち報告」させないための受け口。
+         ★中身は信用しない: 長さを刻み、1人1分5件まで、ファイルは500KBで打ち切り。 */
+      const nowB = Date.now();
+      if (!c.bugT || nowB - c.bugT > 60000) { c.bugT = nowB; c.bugN = 0; }
+      if (++c.bugN <= 5) {
+        const line = `[${new Date().toISOString()}] ${String(m.v || '?').slice(0, 12)} ${String(m.k || '?').slice(0, 24)}`
+          + ` 地図=${String(m.m || '?').slice(0, 12)} 座標=${String(m.pos || '?').slice(0, 40)}`
+          + ` ${String(m.d || '').slice(0, 220)} (${c.name})\n`;
+        console.log('★バグ通報 ' + line.trim());
+        import('fs').then((fs) => {
+          try {
+            const F = 'バグ記録.txt';
+            let ok = true;
+            try { ok = !fs.existsSync(F) || fs.statSync(F).size < 500000; } catch (e) {}
+            if (ok) fs.appendFileSync(F, line);
+          } catch (e) {}
+        }).catch(() => {});
+      }
     } else if (m.t === 'pog') {
       /* ★v117 #280: 返事が返ってきた。★自分が送った番号(k)の返事だけを見る ——
          見ないと、古い返事や作った返事で遅れをいくらでも盛れる。 */
