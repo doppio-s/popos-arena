@@ -6350,7 +6350,9 @@ class Fighter {
         const vanish = this.def.id === 'kagemitsu';
         if (vanish) this.dodgeCount = (this.dodgeCount || 0) + 1;
         this.blockCount++;
-        this.gainSp(vanish ? VANISH_SP_GAIN : BLOCK_SP_GAIN);
+        /* ★v211 #434: 剣の騎士だけ【受け成功でも精神力回復なし】(利用者の注文)。
+           時飛ばし・相手の精神力を奪う効果はそのまま。自分の回復だけ0。 */
+        if (!vanish) this.gainSp(BLOCK_SP_GAIN);
         if (vanish && attacker && attacker !== this && attacker.alive) {
           attacker.sp = Math.max(0, attacker.sp - VANISH_SP_STEAL);
           if (attacker.isPlayer) spWarn();
@@ -7400,8 +7402,7 @@ class Fighter {
       const raging = (this.def.id === 'gou' && this.rageT > 0);
       const sinceSpend = spRegenDelayOf(this.def.id) - this.spRegenDelay;
       const standReady = this.standOn && sinceSpend >= SP_REGEN_STAND_DELAY;
-      /* ★v210 #434: ガード(受け)中は精神力が回復しない(利用者の注文) */
-      if ((this.spRegenDelay <= 0 || raging || standReady) && this.sp < this.maxSp && !this.blockHold) {
+      if ((this.spRegenDelay <= 0 || raging || standReady) && this.sp < this.maxSp) {
         let rate = this.standOn ? spRegenStandOf(this.def.id)          
           : (this.spRegenDelay <= 0 ? spRegenOf(this.def.id) : 0);
         if (raging) rate = Math.max(rate, GRIP_RAGE_REGEN);
@@ -10534,7 +10535,7 @@ function tryReflectShot(f, pr) {
   const dot = -(Math.sin(f.facing) * vx + Math.cos(f.facing) * vz) / l;
   if (dot < BLOCK_DOT) return false;
   f.blockCount++;
-  f.gainSp(BLOCK_SP_GAIN);
+  if (f.def.id !== 'kagemitsu') f.gainSp(BLOCK_SP_GAIN);   /* ★v211 #434: 撃ち返しでも同様 */
   f.ghostActiveT = Math.max(f.ghostActiveT, 1.2);
   pr.vel.x = -pr.vel.x; pr.vel.y = -pr.vel.y; pr.vel.z = -pr.vel.z;
   pr.owner = f;                     
@@ -14931,7 +14932,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v210';
+const GAME_VERSION = 'v211';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
