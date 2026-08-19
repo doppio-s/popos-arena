@@ -488,11 +488,13 @@ setInterval(() => {
     /* ★★v207 #423: 回線が詰まって入力が0.35秒来ない席は【その場で足を止める】。
        止めないと、詰まりの間じゅう審判の中の体だけが最後の向きへ走り続け、
        回復した瞬間に3m超のズレ=強制引き戻しになる(揺らぎ試験で実測)。
-       0.35秒×走り7.6m/s=2.7m なので、止めれば引き戻しの線(3m)を越えない。 */
+       ★v208: 0.35秒だと、詰まり中に手元が逆へ歩いた分と合わさって3mの線を
+       またぐ回が残った(実測3.08m)。0.25秒×7.6m/s=1.9m に締める。
+       入力は60回/秒で届くので、0.25秒無音=本物の詰まりだけが該当する。 */
     { const nowIn = Date.now();
       for (const mb of room.members) {
         if (!mb || !mb.fighter || !mb.fighter.netInput) continue;
-        if (mb.lastInT && nowIn - mb.lastInT > 350) {
+        if (mb.lastInT && nowIn - mb.lastInT > 250) {
           const ni = mb.fighter.netInput;
           ni.mx = 0; ni.mz = 0; ni.atk = false; ni.skillHeld = false;
         }

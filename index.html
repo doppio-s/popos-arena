@@ -13306,7 +13306,9 @@ function snapshotBytes(s) { return JSON.stringify(s || snapshotWorld()).length; 
    1回でも到着が遅れた瞬間に補間が終端に張り付き、【止まって追いつく】を繰り返す
    (実測: 平均5.8m/s に対しばらつき3.6 = 速度が倍半分に揺れていた)。
    2回ぶん + 余白 まで遅らせると、到着の揺れを吸収できる。 */
-const NET_LERP_MS = 115;       
+/* ★v208 #425: 敵の表示遅らせを115→85msへ。戦闘の「今」との差を30ms縮める。
+   写しの棚(v199)と速度調整・45ms先読みがあるので、多少の到着揺れは吸える。 */
+const NET_LERP_MS = 85;        
 /* ★★v198: 写しが遅れて届いた時、補間が終端に張り付くと【その場で止まる】。
    ★次が届いた瞬間にまとめて進むので、止まる→飛ぶ の繰り返し = カクつきになる。
      v197で自分の位置を写しだけで描くようにしたぶん、この影響が直に出る。
@@ -13316,7 +13318,9 @@ const NET_LERP_MS = 115;
 const NET_EXTRAP_MS = 45;      
 /* 写し1枚ぶんのサーバー時間。server.mjs の SNAP_HZ=20 と対。 */
 const NET_BEAT_MS = 50;        
-const NET_SEND_HZ = 30;        
+/* ★v208 #425: 入力の送りを30→60回/秒。押してから審判に届くまでの刻みが半分になる。
+   サーバーの流量の蓋(MSG_PER_SEC=120)には60+返事2で余裕。 */
+const NET_SEND_HZ = 60;        
 const NET_SNAP_DIST = 3.0;     
 const NET_PULL = 0.18;         
 const NET_PULL_Y = 0.30;
@@ -13367,7 +13371,7 @@ function netApplyHumans(n) {
    ★測ったずれはその場で当てず、いったん溜めて毎フレーム少しずつ返す。
      一気に当てると、そこで必ずカクつく。 */
 const NET_FIX_DEAD = 0.45;        // これ以下のずれは直さない(1拍ぶんの誤差)
-const NET_FIX_SNAP = 3.00;        // これ以上は一瞬で合わせる(復活・打ち上げ・転送)
+const NET_FIX_SNAP = 4.00;        // これ以上は一瞬で合わせる(復活・打ち上げ・転送)
 const NET_FIX_BACK = 6.0;         // 溜めたずれを返す速さ(約1/6秒で戻る)
 function netAckSeq(snap) {
   if (!snap || !snap.g) return 0;
@@ -13424,12 +13428,19 @@ function netDrainError(dt) {
   if (Math.hypot(f.x, f.z) < 0.01 && Math.abs(f.y) < 0.01) { net.fix = null; return; }
   const k = clamp(dt * NET_FIX_BACK, 0, 1);
   let cx = f.x * k, cy = f.y * k, cz = f.z * k;
-  /* ★v207 #422: 操作中は返す速さを 1.5m/s(歩きの2割)までに絞る。
-     ズレの育ち(実測 約0.3m/s)より速いので溜まらず、体感もほぼ出ない。 */
+  /* ★v207 #422: 操作中は返す速さを歩きの2割までに絞る(体感ゼロでズレが溜まらない)。
+     ★v208 #424: ただし【被弾直後0.5秒】は12m/s(ノックバックを滑らかに反映)、
+       【ダッシュ・乗り越え・瞬間移動・糸の間】は6m/s(速い動きに紛れて見えない)。 */
   if ((net.lastMag || 0) > 0.25) {
-    const ch = Math.hypot(cx, cz), cap = 1.5 * dt;
+    const nowD = performance.now();
+    const busy = p.dashT > 0 || p.vaultT >= 0 || p.blinkT >= 0 || p.ropeT >= 0 || (p.knock && p.knock.lengthSq && p.knock.lengthSq() > 0.01);
+    /* ★v208: ズレが育つほど返しも速くする(1.2m超えから比例で加速)。
+       これで通常移動でも3mの線に届く前に必ず追い越して返しきる。 */
+    const grow = Math.max(0, (net.fixErr || 0) - 1.2) * 5;
+    const rate = (net.fastFixT && nowD < net.fastFixT) ? 12 : (busy ? 6 + grow : 1.5 + grow);
+    const ch = Math.hypot(cx, cz), cap = rate * dt;
     if (ch > cap && ch > 0) { const sc = cap / ch; cx *= sc; cz *= sc; }
-    const capY = 1.0 * dt;
+    const capY = (rate / 1.5) * dt;
     if (Math.abs(cy) > capY) cy = Math.sign(cy) * capY;
   }
   p.pos.x += cx; p.pos.z += cz; p.y += cy;
@@ -13606,6 +13617,7 @@ function netStart(m) {
   net.q = []; net.bBeat = 0; net.play = undefined;
   /* ★v203: 先読みの控えとずれも毎試合たたむ */
   net.hist = []; net.seq = 0; net.fix = null; net.fixErr = 0; net.fixSnaps = 0;
+  net.fastFixT = 0; net._hpPrev = undefined;   /* ★v208 #424 */
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -13743,9 +13755,14 @@ function netApplySnapshots(dt) {
     const gy = ra[2] + (rb[2] - ra[2]) * uy;
     const gz = ra[3] + (rb[3] - ra[3]) * u;
     if (i === net.slot) {
-      /* ★★v203: 自分の位置は手元の先読みが持つので、ここでは触らない。
-         ずれの返却は上の netDrainError が毎フレーム少しずつ行う。
-         体力・盾・段は写しの値をそのまま使う(このループの先頭で入れてある)。 */
+      /* ★★v203: 自分の位置は手元の先読みが持つので、ここでは触らない。 */
+      /* ★★★v208 #424: 【殴られた】のを写しで知ったら、しばらくズレ返しを速める。
+         被弾ノックバックは審判だけが動かすので、ゆっくり返し(1.5m/s)では
+         追いつかず3m溜まって「ドカンと戻る」最後の発生源になっていた。
+         速い返しなら「押し飛ばされた」として滑らかに映る。 */
+      const hpNow = (x.hp | 0) + (x.shield | 0);
+      if (net._hpPrev !== undefined && hpNow < net._hpPrev) net.fastFixT = performance.now() + 500;
+      net._hpPrev = hpNow;
     } else {
       const vx = (rb[1] - ra[1]) / (span / 1000);
       const vz = (rb[3] - ra[3]) / (span / 1000);
@@ -14798,7 +14815,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v207';
+const GAME_VERSION = 'v208';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
