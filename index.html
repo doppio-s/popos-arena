@@ -381,9 +381,9 @@
   <h1>POPO'S LAST SURVIVOR</h1>
   <div id="verTag"></div>
   <div id="howto" class="hidden"></div>
-  <button id="titleStartBtn" class="bigBtn">START</button>
+  <button id="titleStartBtn" class="bigBtn">ひとりで遊ぶ(オフライン)</button>
   <button id="langBtn" class="subBtn" style="position:absolute;right:14px;top:14px;">English</button>
-  <button id="titleOnlineBtn" class="bigBtn">オンラインで遊ぶ(仮)</button>
+  <button id="titleOnlineBtn" class="bigBtn">オンラインで遊ぶ</button>
   <div id="adTitle" class="adSlot"></div>
 </div>
 <div id="netScreen" class="screen hidden">
@@ -1780,6 +1780,14 @@ function buildTown(mapId, seed) {
   def.build();
   finalizeBatches();
   buildBuildingGrid();
+  /* ★★★v206 #420: 出現枠の抽選前に【種から引き直す】。
+     ★飾りの生成(finalizeBatches)は新品の世界で3万回くじを引くが、
+       使い回しの世界では出来上がりを使い回すので【0回】。
+       くじの位置が3万回ぶんズレ、同じ種なのに出現枠が全員別の場所になる。
+     ★審判は部屋を使い回し、ブラウザは毎回新品 —— つまり2部屋目から
+       【開幕で審判と手元が約100mズレて、いきなり引き戻される】のはこれ。
+     ★抽選の直前に種から引き直せば、そこまでに何回引いたかは関係なくなる。 */
+  seedRandom(((town.seed >>> 0) ^ 0x9e3779b9) >>> 0 || 1);
   buildSpawnSpots();          
   scene.add(town.group);
   seedRandom(0);              
@@ -5881,7 +5889,7 @@ const EN_DICT = {
   'そのまま観戦できます(試合が終わると待合室へ戻ります)':
     'You can keep spectating — you\u2019ll return to the lobby when the match ends', 'もう一回': 'Play again', 'タイトルへ': 'Title',
   '撃破数:': 'Kills:', '到達レベル:': 'Level reached:',
-  'オンラインで遊ぶ(仮)': 'Play online (beta)',
+  'オンラインで遊ぶ': 'Play online', 'ひとりで遊ぶ(オフライン)': 'Solo (offline)',
   '— キャラクター選択 —': '— CHOOSE YOUR FIGHTER —', '— ステージ —': '— STAGE —', '出撃!': 'Deploy!',
   'むずかしさ': 'Difficulty', '射程': 'Range', '遠距離': 'ranged',
   '— オンライン(仮) —': '— ONLINE (beta) —', 'この名前で入る': 'Join with this name', 'やめる': 'Cancel',
@@ -13348,16 +13356,8 @@ function netDetachRemoteInputs() {
   }
 }
 function netApplyHumans(n) {
-  const want = (n | 0) === 1;
-  if (want === !!net.localSim) return;
-  net.localSim = want;
-  if (want) {
-    netDetachRemoteInputs();
-    announce('1人になったので手元で動かします');
-  } else {
-    netAttachRemoteInputs();
-    announce('対戦相手が入ったので審判を使います');
-  }
+  /* ★v206 #419: かつては人数1⇔2で手元⇔審判を切り替えていた。
+     いまは常に審判方式なので、この合図では何も切り替えない。 */
 }
 /* ★★★v203: 手元の先読みと、サーバーの写しの照らし合わせ。
    ★肝は【較べる相手】。指示には番号を振って送り、サーバーは
@@ -13392,6 +13392,11 @@ function netMeasureError(snap) {
     p.pos.x += ex; p.y += ey; p.pos.z += ez;
     p.vy = 0;
     pushOut(p.pos, 0.55, p.y, p);
+    /* ★★★v206 #421: 直したぶんを【まだ返事の来ていない控え】にも足す。
+       足さないと、返事が遅れて届くたびに同じズレがもう一度「誤差」に見えて、
+       同じ修正が何連発もかかる = 一瞬でマップの外へ吹き飛ぶ(実測: 毎コマ60〜130m)。
+       v182 #403 で学んだ「直したら履歴も動かす」の v203 先読み版。 */
+    for (let hI = 0; hI < h.length; hI++) { h[hI].x += ex; h[hI].y += ey; h[hI].z += ez; }
     net.fix = null;
     net.fixSnaps = (net.fixSnaps | 0) + 1;
     return;
@@ -13415,8 +13420,12 @@ function netDrainError(dt) {
   if (!f || !p) return;
   if (Math.hypot(f.x, f.z) < 0.01 && Math.abs(f.y) < 0.01) { net.fix = null; return; }
   const k = clamp(dt * NET_FIX_BACK, 0, 1);
-  p.pos.x += f.x * k; p.pos.z += f.z * k; p.y += f.y * k;
-  f.x -= f.x * k; f.z -= f.z * k; f.y -= f.y * k;
+  const cx = f.x * k, cy = f.y * k, cz = f.z * k;
+  p.pos.x += cx; p.pos.z += cz; p.y += cy;
+  /* ★v206 #421: 少しずつ返す方も同じ —— 動かしたぶんは控えにも足す(二重取り防止) */
+  const hh = net.hist;
+  if (hh) for (let hI = 0; hI < hh.length; hI++) { hh[hI].x += cx; hh[hI].y += cy; hh[hI].z += cz; }
+  f.x -= cx; f.z -= cz; f.y -= cy;
 }
 
 /* ★★v198: 遊んでいる人の手元の実測値を、サーバーの記録に流す。
@@ -13557,9 +13566,7 @@ function netOnMessage(m) {
     net.ping = m.rtt || 0;
     const badge = $('netBadge');
     if (badge && net.on) {
-      badge.textContent = net.localSim
-        ? `オンライン ${net.room} / CPU戦 / ${net.ping}ms`
-        : `オンライン ${net.room} / 席${net.slot + 1} / ${net.ping}ms`;
+      badge.textContent = `オンライン ${net.room} / 席${net.slot + 1} / ${net.ping}ms`;
     }
   } else if (m.t === 'orbs') {
     if (net.localSim) return;
@@ -13575,8 +13582,13 @@ function netOnMessage(m) {
 }
 function netStart(m) {
   net.on = true; net.waiting = false;
-  /* ★v205: 人がちょうど1人の時だけ手元で動かす。人数が無い古い合図では審判のまま。 */
-  net.localSim = (m.humans | 0) === 1;
+  /* ★★★v206 #419: 1人部屋の特別扱い(localSim)を廃止。
+     利用者「一人の時でも多人数戦のときとおなじにして」——
+     オンラインは人数に関係なく常に審判方式。ひとりでの試験が本番と同じ挙動になる。
+     (以前は1人だと手元で動かし、'end'を無視していたので、審判が裏で部屋を
+      畳んで作り直すたびに 'start' が飛んできて【遊んでいる最中に別の部屋へ
+      引きずり込まれる】= r10 のような高い部屋番号の正体。) */
+  net.localSim = false;
   net.slot = m.slot | 0; net.roster = m.roster; net.seed = m.seed; net.map = m.map; net.room = m.room;
   net.a = net.b = null; net.sendAcc = 0; net.died = false; net.won = false;
   /* ★v199: 写しの棚と再生の時計を毎試合たたむ。持ち越すと最初の一瞬だけ飛ぶ。 */
@@ -13595,16 +13607,12 @@ function netStart(m) {
   const badge = $('netBadge');
   if (badge) {
     badge.classList.remove('hidden');
-    badge.textContent = net.localSim
-      ? `オンライン ${m.room} / CPU戦`
-      : `オンライン ${m.room} / 席${net.slot + 1}`;
+    badge.textContent = `オンライン ${m.room} / 席${net.slot + 1}`;
   }
+  world.lastNet = true;   /* ★v206 #419: 「もう一回」がどちらの世界へ戻るかの覚え書き */
   startBattle(m.roster.chars[net.slot], m.map, m.seed, m.roster, net.slot);
-  /* ★v205: 1人試合ではCPUに netInput を付けない。付けるとAIが黙り、出現地点に凍る。 */
-  if (!net.localSim) netAttachRemoteInputs();
-  announce(net.localSim
-    ? `オンライン開始! CPU戦 (${m.room})`
-    : `オンライン開始! ${m.room} / ${net.slot + 1}番`);
+  netAttachRemoteInputs();
+  announce(`オンライン開始! ${m.room} / ${net.slot + 1}番`);
 }
 function netEnd(why) {
   const wasOn = net.on;
@@ -13955,7 +13963,10 @@ function startBattle(charId, mapId, seed) {
   const roster = arguments[3] || null;
   const slotArg = arguments[4];
   const mySlot = (slotArg === undefined || slotArg === null) ? 0 : (slotArg | 0);
-  world.zonePlan = buildZonePlan();   
+  /* ★v206 #420: 安置の予定も種から引く —— 審判と手元で縮む先の予告が一致する */
+  seedRandom(((town.seed >>> 0) ^ 0x51ed2701) >>> 0 || 1);
+  world.zonePlan = buildZonePlan();
+  seedRandom(0);   
   world.zone.cx = 0; world.zone.cz = 0;
   const names = [...BOT_NAMES];
   for (let i = 0; i < TOTAL_FIGHTERS; i++) {
@@ -14776,7 +14787,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v205';
+const GAME_VERSION = 'v206';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -14935,18 +14946,37 @@ $('selectStartBtn').addEventListener('click', () => {
       `つなぎ先: ${netUrl()}<br>サーバーは <b>node server.mjs</b> で動かします`);
     return;
   }
+  /* ★★★v206 #419: ひとりで遊ぶ=完全オフライン。
+     線が残っていたら【必ず切ってから】始める。切らないと
+     ①左上にオンライン帯が残る ②審判の後始末('start'の再送)が
+     遊んでいる最中の世界を乗っ取る。 */
+  netDisconnect();
+  { const b = $('netBadge'); if (b) b.classList.add('hidden'); }
+  world.lastNet = false;
   startBattle(selectedChar, chosenMapId() || undefined);
 });
 $('retryBtn').addEventListener('click', () => {
   sfx.uiTap();
-  if (selectedChar) {
-    $('resultScreen').classList.add('hidden');
-  unmountAd('result');  
-    startBattle(selectedChar, chosenMapId() || undefined);
+  if (!selectedChar) return;
+  $('resultScreen').classList.add('hidden');
+  unmountAd('result');
+  if (world.lastNet) {
+    /* ★v206 #419: オンラインの試合の「もう一回」は【オンラインへ】戻す。
+       前はここで黙ってオフライン試合を始めていた =「混ざる」大本。 */
+    $('netScreen').classList.remove('hidden');
+    let saved = '';
+    try { saved = localStorage.getItem('gs_netname') || ''; } catch (e) {}
+    $('netName').value = saved;
+    netSetStatus('もう一度「この名前で入る」を押してください', `つなぎ先: ${netUrl()}`);
+    return;
   }
+  netDisconnect();
+  { const b = $('netBadge'); if (b) b.classList.add('hidden'); }
+  startBattle(selectedChar, chosenMapId() || undefined);
 });
 $('toTitleBtn').addEventListener('click', () => {
   sfx.uiTap();
+  world.lastNet = false;   /* ★v206 #419: タイトルへ戻ったら次の「もう一回」はその時の入口に従う */
   if (net.on) { try { netDisconnect(); } catch (e) {} net.localSim = false; }
   cleanupBattle();
   $('resultScreen').classList.add('hidden');
