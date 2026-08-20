@@ -13405,6 +13405,10 @@ function snapshotWorld() {
     ...((world.netKills && world.netKills.length) ? { kil: world.netKills.splice(0) } : null),
     m: world.mapId, s: town.seed >>> 0,
     z: [r2(world.zone.cx), r2(world.zone.cz), r2(world.zone.r)],
+    /* ★★★v226 #460: エリアの【前倒し時間】(神父の奥義で進む)。これが写しに無いと、
+       誰かが奥義を使うたび審判のリングだけ先に縮み、手元のリングは大きいまま =
+       「エリア内に見えるのに焼かれる」(利用者の実報告)。 */
+    zw: r2(world.zoneWarp || 0),
     f,
   };
 }
@@ -14200,6 +14204,10 @@ function netApplySnapshots(dt) {
   /* ★v199: 自分の過去の位置を溜めていた棚は撤去。
      v196までの「手元で歩いた履歴と写しを突き合わせる」処理だけが読んでいた。 */
   world.matchT = B.mt;
+  /* ★★★v226 #460: エリアの前倒し時間も審判に合わせる。手元のupdateZoneは毎フレーム
+     リングを matchT+zoneWarp から描き直すので、ここを合わせないと B.z の同期(下)も
+     次のフレームで上書きされて意味を失っていた。 */
+  if (B.zw !== undefined) world.zoneWarp = B.zw;
   netCheckOutcome();
   return n;
 }
@@ -15223,7 +15231,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v225';
+const GAME_VERSION = 'v226';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
