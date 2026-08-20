@@ -6088,6 +6088,7 @@ class Fighter {
     this.sp = SP_MAX;
     this.spExhaust = 0;
     this.spRegenDelay = 0;
+    this.guardCalmT = 0;   /* ★v227 #461: 剣の騎士: 受け成功後は回復が遅い時間 */
     this.maxShield = SHIELD_MAX;
     this.shield = SHIELD_START;
     this.standOn = false;   
@@ -6410,7 +6411,14 @@ class Fighter {
            「回復してるし」の正体。受け成功のたびに回復の再開を3秒遅らせる——
            受け続ける限り回復ゼロ、守りをやめて3秒で回復が戻る。 */
         if (!vanish) this.gainSp(BLOCK_SP_GAIN);
-        else this.spRegenDelay = Math.max(this.spRegenDelay, 6.0);   /* ★v215: 3→6秒(利用者「まだ回復してる」) */
+        else {
+          this.spRegenDelay = Math.max(this.spRegenDelay, 6.0);   /* ★v215: 3→6秒(利用者「まだ回復してる」) */
+          /* ★★v227 #461: 6秒待てば毎秒2000で0.5秒満タン=「ガードで回復してる」ようにしか
+             見えなかった(利用者3回目の指摘で発覚した本当の正体)。受け成功から12秒は
+             回復の速さ自体を2000→150に絞る —— 受けるほど絞りが延長され、
+             守り続けても精神力は湧かない。 */
+          this.guardCalmT = 12;
+        }
         if (vanish && attacker && attacker !== this && attacker.alive) {
           attacker.sp = Math.max(0, attacker.sp - VANISH_SP_STEAL);
           if (attacker.isPlayer) spWarn();
@@ -7440,7 +7448,10 @@ class Fighter {
     }
     if (this.trapHoldT > 0) {
       this.trapHoldT += dt;
-      if (!this.isPlayer && this.trapHoldT >= trapHoldMinOf(this)) {
+      /* ★v227 #462: 観客の画面の【絵だけの溜め】は発動させない。
+         審判側の人間の席(netInputあり・netRemote()=false)は従来どおり0.7秒で自動発動。 */
+      if (!this.isPlayer && !(this.netInput && typeof netRemote === 'function' && netRemote())
+          && this.trapHoldT >= trapHoldMinOf(this)) {
         releaseTrapHold(this);          
       } else if (this.isPlayer && Math.random() < dt * 26) {
         spawnBurst(this.pos.clone().add(new THREE.Vector3(0, 1.15, 0)),
@@ -7467,6 +7478,7 @@ class Fighter {
     } else {
       if (this.scanT > 0) this.scanT = Math.max(0, this.scanT - dt);   
       this.spRegenDelay = Math.max(0, this.spRegenDelay - dt);
+      this.guardCalmT = Math.max(0, (this.guardCalmT || 0) - dt);   /* ★v227 #461 */
       const raging = (this.def.id === 'gou' && this.rageT > 0);
       const sinceSpend = spRegenDelayOf(this.def.id) - this.spRegenDelay;
       const standReady = this.standOn && sinceSpend >= SP_REGEN_STAND_DELAY;
@@ -7478,6 +7490,8 @@ class Fighter {
         let rate = this.standOn ? spRegenStandOf(this.def.id)          
           : (this.spRegenDelay <= 0 ? spRegenOf(this.def.id) : 0);
         if (raging) rate = Math.max(rate, GRIP_RAGE_REGEN);
+        /* ★v227 #461: 剣の騎士は受け成功後12秒、回復が滴になる(満タンまで約6.6秒) */
+        if (this.def.id === 'kagemitsu' && this.guardCalmT > 0) rate = Math.min(rate, 150);
         this.sp = Math.min(this.maxSp, this.sp + rate * dt);
       }
     }
@@ -13349,13 +13363,14 @@ function updateLabels(dt) {
 const NET_TICK_HZ = 20;
 const NET_F_ALIVE = 1, NET_F_STAND = 2, NET_F_CROUCH = 4, NET_F_SWING = 8,
   NET_F_ASTRAL = 16, NET_F_GROUND = 32, NET_F_DIVE = 64,
-  NET_F_CLIMB = 128,      
-  NET_F_BLOCK = 256;      
+  NET_F_CLIMB = 128,
+  NET_F_BLOCK = 256,
+  NET_F_HOLD = 512;   /* ★v227 #462: 技を溜めている(空間喰い等)。無いと観客の画面で溜めモーションが一切出ない */
 function evPack(x) {
   return ((x.evJ | 0) & 15) | (((x.evS | 0) & 15) << 4) | (((x.evU | 0) & 15) << 8)
     | (((x.evD | 0) & 15) << 12) | (((x.evV | 0) & 15) << 16);
 }
-const EV_BITS = 9;                       
+const EV_BITS = 10;                       /* ★v227 #462: NET_F_HOLD(512)のぶん1桁拡張 */
 const EV_FLAG_MASK = (1 << EV_BITS) - 1;
 const evRow = (x, flags) => flags | (evPack(x) << EV_BITS);
 function snapshotWorld() {
@@ -13367,7 +13382,8 @@ function snapshotWorld() {
       | (x.crouch ? NET_F_CROUCH : 0) | (x.swingT >= 0 ? NET_F_SWING : 0)
       | (x.astral ? NET_F_ASTRAL : 0) | (x.grounded ? NET_F_GROUND : 0)
       | (x.diveT > 0 ? NET_F_DIVE : 0) | (x.climbT > 0 ? NET_F_CLIMB : 0)
-      | (x.blockHold ? NET_F_BLOCK : 0);
+      | (x.blockHold ? NET_F_BLOCK : 0)
+      | (x.trapHoldT > 0 ? NET_F_HOLD : 0);   /* ★v227 #462 */
     f.push([i, r2(x.pos.x), r2(x.y), r2(x.pos.z), r2(x.facing),
       Math.round(x.hp), Math.round(x.shield || 0), x.level | 0, evRow(x, flags)]);
   }
@@ -14154,6 +14170,11 @@ function netApplySnapshots(dt) {
       x.standOn = !!(fl & NET_F_STAND);
       x.crouch = !!(fl & NET_F_CROUCH);
       x.grounded = !!(fl & NET_F_GROUND);
+      /* ★★v227 #462: 溜めモーションを観客にも。旗が立っている間 trapHoldT を流し込むと、
+         共有コードの「trapHoldT += dt」(7442)が勝手に育て、構えのポーズ(_gouWind等)が動く。
+         実発動は審判からの出来事で届くので、ここでは絵だけ。 */
+      if (fl & NET_F_HOLD) { if (!(x.trapHoldT > 0)) x.trapHoldT = 1e-6; }
+      else x.trapHoldT = 0;
     }
     const gx = ra[1] + (rb[1] - ra[1]) * u;
     const gy = ra[2] + (rb[2] - ra[2]) * uy;
@@ -15231,7 +15252,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v226';
+const GAME_VERSION = 'v227';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
