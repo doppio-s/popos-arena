@@ -3421,7 +3421,8 @@ function addPad(x, z, big, baseY = 0) {
   town.pads.push({ x, z, r: 1.1, vy: big ? 20.5 : 16.5, big, glow, t: rand(6), y: baseY });
 }
 function updatePads(dt) {
-  for (const pad of town.pads) {
+  for (let pi = 0; pi < town.pads.length; pi++) {
+    const pad = town.pads[pi];
     const py = pad.y || 0;
     pad.t += dt;
     pad.glow.position.y = py + 0.26 + Math.sin(pad.t * 3) * 0.06;
@@ -3434,6 +3435,16 @@ function updatePads(dt) {
         f.y = py + 0.05;
         sfx.spring(volAt(f.pos));
         spawnRing(f.pos, pad.big ? 0xffd76a : 0x5ad7ff, { r1: 2, life: 0.4 });
+        /* ★★★v222 #456: 自分がパッドを踏んだら【番号で審判にも伝える】(窓の'gb'と同じ型)。
+           パッドの半径1.1mは、手元と審判の位置ズレ(0.7〜1.1m)とほぼ同じ大きさ ——
+           端をかすめた時に【片方だけ発射】が起き、秒速16.5〜20.5で数階ぶん飛ぶうちに
+           縦ズレが4mを超えて空中から引き剥がされる = 利用者の言う
+           「二階とかある程度の高さ・ジャンプパッドでバグる」の正体。
+           審判は本人がパッドから2.7m以内(半径+ズレぶん)の時だけ信じる。 */
+        if (f.isPlayer && typeof netRemote === 'function' && netRemote()
+            && net.ws && net.ws.readyState === 1) {
+          try { net.ws.send(JSON.stringify({ t: 'jp', i: pi })); } catch (e) {}
+        }
       }
     }
   }
@@ -13616,6 +13627,19 @@ function netMeasureError(snap) {
     if ((eh < 1.0 && Math.abs(ey) < 1.0) || performance.now() > net.warpT) { net.warpSeq = -1; }
     else { net.fix = null; net.fixErr = 0; return; }
   }
+  /* ★★v222 #456c: 【縦だけ】大きくズレた時(横は合っている)は、ドカンの前に一呼吸置く。
+     二階と一階・パッドの片方発射・棚の縁 —— 高さの食い違いは、審判が少し遅れて
+     発射/落下することで数百msのうちに自然と再合流することが多い。即4m判定で
+     引き剥がすと「高い場所でバグる」になる。収束(|ey|<1)を一度見たら次の縦ズレでまた守れる
+     (収束せず期限が切れたら、従来どおりドカンで審判に従う)。 */
+  if (Math.abs(ey) < 1.0) net._vgOk = true;
+  if (net._vgOk && Math.abs(ey) > 2.0 && eh < 1.2) {
+    net._vgOk = false;
+    net.warpSeq = net.seq | 0;
+    net.warpT = Math.max(net.warpT || 0, performance.now() + Math.min(1800, 900 + (net.ping || 0) * 1.5));
+    net.fix = null; net.fixErr = 0;
+    return;
+  }
   if (eh > NET_FIX_SNAP || Math.abs(ey) > NET_FIX_SNAP) {
     if (typeof netBugReport === 'function') netBugReport('hardsnap', `eh=${eh.toFixed(1)} ey=${ey.toFixed(1)}`);
     if (globalThis.__snapLog) globalThis.__snapLog.push({ t: world.matchT, eh, hp: p.hp,
@@ -13917,6 +13941,7 @@ function netStart(m) {
   net._protSaid = false;   /* ★v216 #448: 着地保護の案内は1試合1回 */
   net._pvClimb = net._pvVault = net._pvAir = false;   /* ★v219 #451 */
   net._cutDoneT = 0;   /* ★v220 #453 */
+  net._vgOk = true;   /* ★v222 #456c: 縦ズレの一呼吸 */
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -14011,7 +14036,13 @@ function netSendInput(dt) {
     const _climb = p.climbT > 0, _vault = p.vaultT >= 0, _air = !p.grounded;
     if (!_hurt && ((_climb && !net._pvClimb) || (_vault && !net._pvVault) || (_air && !net._pvAir))) {
       net.warpSeq = qn;
-      net.warpT = Math.max(net.warpT || 0, _nowW + Math.min(1000, 400 + (net.ping || 0) * 1.5));
+      /* ★v222 #456b: パッド級の打ち上げ(vy>10。通常ジャンプは届かない)は飛行が1.7〜2秒
+         続くので、猶予も飛行まるごと覆う長さにする。審判が0.1秒遅れて発射しても、
+         着地までに収束すれば無音で合う。 */
+      const _big = p.vy > 10;
+      net.warpT = Math.max(net.warpT || 0,
+        _nowW + (_big ? Math.min(2400, 1500 + (net.ping || 0) * 1.5)
+                      : Math.min(1000, 400 + (net.ping || 0) * 1.5)));
       net.fix = null; net.fixErr = 0;
     }
     net._pvClimb = _climb; net._pvVault = _vault; net._pvAir = _air;
@@ -15164,7 +15195,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v221';
+const GAME_VERSION = 'v222';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

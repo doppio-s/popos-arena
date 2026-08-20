@@ -755,6 +755,24 @@ attachWs(server, {
       if (!g || !g.alive) return;
       if (Math.hypot(g.cx - f.pos.x, g.cz - f.pos.z) > 6) return;
       try { room.mod.breakGlass(g); } catch (e) {}
+    } else if (m.t === 'jp') {
+      /* ★★★v222 #456: 手元が踏んだジャンプパッドの番号。パッドの半径は1.1mで、
+         手元と審判の位置ズレ(0.7〜1.1m)とほぼ同じ —— 端をかすめると【片方だけ発射】になり、
+         数階ぶんの縦ズレ→空中から引き剥がし、が起きていた(利用者「高い所とパッドでバグる」)。
+         ★信用はしない: 実在する番号で、本人がそのパッドから2.7m以内(半径+ズレぶん)、
+           高さも合っていて、まだ上向きに飛んでいない時だけ発射する。 */
+      const fp = c.fighter, roomP = c.room;
+      if (!fp || !fp.alive || !roomP || !roomP.mod) return;
+      const pads = roomP.mod.town && roomP.mod.town.pads;
+      const pd = pads && pads[m.i | 0];
+      if (!pd) return;
+      const pyP = pd.y || 0;
+      if (Math.hypot(pd.x - fp.pos.x, pd.z - fp.pos.z) > pd.r + 1.6) return;
+      if (Math.abs(fp.y - pyP) > 1.2) return;
+      if (fp.vy > 3) return;                    // もう飛んでいる(二重発射防止)
+      fp.vy = pd.vy;
+      fp.grounded = false;
+      fp.y = Math.max(fp.y, pyP + 0.05);
     } else if (m.t === 'diag') {
       /* ★★v198: 遊んでいる人の手元の実測値を記録に残す。
          ★「カクつく」の一言では、絵が重いのか写しが遅れているのかが分からない。
