@@ -4551,12 +4551,34 @@ function pickEscapeDir(x, z, y, goalA, avoidA) {
      壁のAABBと重なっていても【立っている】と認める。
      ワープ検問(速度上限)は一切緩めないので、チート耐性は変わらない。 */
 const STAND_OK_TOL = 0.06;
+/* ★★★v237 #474: v235のこの関数には【地面(y=0)ではどこでも true になる】穴があった。
+   groundHeightAt は台が1つも見つからない時に既定値 0 を返すので、
+   壁の芯であろうと y=0 なら |0 - 0| <= 0.06 で「立てている」と答えてしまう。
+   結果、審判の検問が地面の高さで【壁の中の位置まで受理】するようになり、
+   壁の中に立つ審判側の体からは攻撃線が壁に遮られて —— 利用者
+   「闘技場でダメージがぜんぜん入ってなかった」。柱や壁の多い闘技場で特に出る。
+   ★直し方: 「本物の台に支えられている時だけ」true。台が無ければ -1 を返して false。
+     素の地面(y≒0)は台ではないので、従来どおり spotFree(壁チェック)に判定を委ねる ——
+     地面には段の縁のような食い違いが無いので、これで v235 の目的は損なわれない。 */
+function standSurfaceAt(x, z, y, step = 0.45) {
+  let g = -1;
+  const boxes = nearBoxes(x, z, _nbStand);
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    if (!b.standable) continue;
+    if (b.h > y + (b.sill ? Math.max(step, WIN_SILL + 0.06) : step)) continue;
+    if (Math.abs(x - b.x) < b.hw + 0.3 && Math.abs(z - b.z) < b.hd + 0.3) {
+      if (b.h > g) g = b.h;
+    }
+  }
+  return g;                      /* 台が1つも無ければ -1(既定値0で誤魔化さない) */
+}
+const _nbStand = [];
 function standOkAt(x, z, y) {
   if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(y)) return false;
-  if (y < -0.5) return false;
-  /* 足元をわずかに上から見下ろして、その高さの面に乗っているかを見る */
-  const g = groundHeightAt(x, z, y + STAND_OK_TOL, 0.45);
-  return Math.abs(g - y) <= STAND_OK_TOL;
+  if (y < 0.05) return false;    /* 素の地面は台ではない → 壁チェックに任せる */
+  const g = standSurfaceAt(x, z, y + STAND_OK_TOL, 0.45);
+  return g >= 0 && Math.abs(g - y) <= STAND_OK_TOL;
 }
 function groundHeightAt(x, z, y, step = 0.45) {
   let g = 0;
@@ -6007,6 +6029,7 @@ const EN_DICT = {
   /* ★v236 #472/#473: 新しい知らせ文 */
   '空気弾! もう一度で起爆 / ジャンプで解除': 'Air bomb! Press again to detonate / Jump to drop',
   '空気弾 不発': 'Air bomb fizzled',
+  '気絶!': 'Stunned!',
   '追尾爆弾がもうすぐ爆発する!!': 'The hunting bomb is about to blow!!',
   '浮上': 'Surface', '壁を上る': 'Climb wall', 'スキャン': 'Scan', '隠れた敵を捕捉': 'Reveal hidden foes',
   '設置': 'Plant', '狙い中': 'Aiming…', '離すと設置': 'Release to plant', '離すと貼付': 'Release to stick',
@@ -13532,7 +13555,19 @@ function snapshotWorld() {
       (x.netInput && x.netInput.q) | 0,
       /* ★v216 #448: 着地保護の残り(0.1秒刻み)。付けないと、保護中の敵を殴った人に
          「当たったのに減らない」が黙って起きる —— 点滅で"守られている"と見せる。 */
-      Math.round(Math.max(0, Math.min(25, x.protT || 0)) * 10)]);
+      Math.round(Math.max(0, Math.min(25, x.protT || 0)) * 10),
+      /* ★★★v237 #475: 【奥義の残り回数・奥義の待ち・気絶・鈍足】。
+         利用者「ウルトの回数や、スタン、判定がオンラインの時に適応されてない気がする」。
+         v201でsp・技の待ちは配るようにしたが、この4つは【一度も写しに入っていなかった】——
+         つまり手元の推測のまま、審判が一度も直したことがない。起きること:
+           ・奥義の回数: 審判は使い切った判定なのに手元は残っていると思い、押しても黙って不発
+           ・気絶(stunT): 審判は気絶中なのに手元は知らないので、振り続けて全部空振り
+             = 「スタンが効いていない」「判定が入らない」が同時に起きる
+         気絶と鈍足は0.1秒刻み(protTと同じ作り)。 */
+      x.ultLeft | 0,
+      r2(Math.max(0, x.ultCd || 0)),
+      Math.round(Math.max(0, Math.min(25, x.stunT || 0)) * 10),
+      Math.round(Math.max(0, Math.min(25, x.slowT || 0)) * 10)]);
   }
   return {
     mt: r2(world.matchT || 0),
@@ -14331,6 +14366,23 @@ function netApplySnapshots(dt) {
         if (r[0] === net.slot && x.protT > 0.8 && !net._protSaid) {
           net._protSaid = true;
           try { announce('着地保護中: しばらく攻撃を受けない'); } catch (e) {}
+        }
+      }
+      /* ★★★v237 #475: 奥義の残り・待ち・気絶・鈍足を審判の値で上書きする。
+         戦闘は審判が正なので、ここは推測を残さず素直に従う。
+         ★気絶が【新しく】始まった時は、手元の振りかけ・構えも畳む ——
+           畳まないと「気絶しているのに腕だけ振っている」絵になり、
+           当たらない理由が画面から読めない。 */
+      if (r.length > 11) {
+        x.ultLeft = r[8] | 0;
+        x.ultCd = r[9];
+        const st = (r[10] | 0) / 10, sl = (r[11] | 0) / 10;
+        const wasStun = x.stunT > 0;
+        x.stunT = st; x.slowT = sl;
+        if (st > 0 && !wasStun) {
+          if (typeof x.cancelSwing === 'function') x.cancelSwing();
+          x.attackHeld = false; x.blockHold = false;
+          if (r[0] === net.slot) { world.attackHeld = false; announce('気絶!'); }
         }
       }
     }
@@ -15433,7 +15485,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v236';
+const GAME_VERSION = 'v237';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
