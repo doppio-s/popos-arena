@@ -73,7 +73,7 @@ const EXPORTS = '{ world, CHAR_DEFS, CHAR_ORDER, startBattle, cleanupBattle, WOR
   'addTree, addLamp, addCafeSeats, addWellhead, addCrate, addGondola, findOpenSpot, ' +
   'TS_RIPPLE_N, TS_RIPPLE_GAP, TS_RIPPLE_R, TS_RIPPLE_LIFE, spawnRing, spawnPillar, ' +
   'spotFree, spotBlame, standOkAt, STAND_OK_TOL, ' +   /* ★v231 #466: 棄却ログの「塞」で審判が呼ぶ */
-  'AIR_SPEED, AIR_LIFE, AIR_STEER, AIR_R, AIR_MAIN, AIR_EDGE, AIR_STUN, explodeAirBullet, ' +
+  'SEEK_JUMP_VY, SEEK_JUMP_CD, explodeStalker, AIR_SPEED, AIR_LIFE, AIR_STEER, AIR_R, AIR_MAIN, AIR_EDGE, AIR_STUN, explodeAirBullet, ' +
   'AIR_RANGE, AIR_WALL_SLIDE, AIR_WALL_T, cancelAirBullet, ' +   // v144 #309 / v145 #310
   'RWND_REWIND, RWND_SAMPLE, RWND_HIST, rewindAllPositions, endTimeStop, ' +
   // v13: 時間停止(2秒・溜め・1試合1回) と 落下奥義
