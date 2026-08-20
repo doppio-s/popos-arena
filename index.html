@@ -12088,10 +12088,10 @@ function updateProjectiles(dt) {
   }
 }
 const LAG_HIST_T = 0.45;
-/* ★v232 #468: 0.25→0.30。夜の回線の実測(往復130ms/2 + 実測棚200ms = 0.265s)が
-   蓋からはみ出て補償しきれていた。物陰に入った直後に撃たれる不利は+50msぶんだけ増えるが、
-   近接が主体のこのゲームでは「見えた敵に当たる」方がずっと大事。 */
-const LAG_MAX = 0.30;
+/* ★v233 #469: v232の0.30は【撤回】して0.25へ。棚が115ms固定に戻ったので
+   蓋からはみ出す理屈自体が消えた。0.30のままだと「物陰に入った後に殴られる」
+   猶予だけが+50ms残り、殴られる側のラグ体感を増やす。 */
+const LAG_MAX = 0.25;
 function lagOf(f) {
   const n = f && f.netInput;
   return n ? clamp(n.lag || 0, 0, LAG_MAX) : 0;
@@ -13987,16 +13987,16 @@ function netOnMessage(m) {
     net.a = net.b; net.aT = net.bT;
     const _prevBT = net.bT;
     net.b = m; net.bT = performance.now();
-    /* ★★v232 #467b: 補間の棚(115ms)を【実測の届き間隔】に合わせて自動で厚くする。
-       v221の実測は昼: 9割65ms・最大128ms → 115msで収まる。だが夜の回線(実測ping
-       86〜136ms)は届きの波も大きく、棚を超えた瞬間に補間が枯れて先読み→着弾でビクッ
-       =「NPC・敵が急にワープする」が夜だけ再発する。
-       届き間隔のピークを保持(10秒半減で忘れる)し、棚 = ピーク+25ms(115〜200ms)。
-       綺麗な回線では今まで通り115msのまま。 */
+    /* ★★v233 #469: v232 #467b(棚の自動延長)は【撤回】。利用者「ラグが目立つ」。
+       原因は保持の作り: ピークを 0.9966/写し で忘れる = 約10秒半減。つまり
+       【たった1回の詰まり(GCやタブの一瞬の停止で300ms)が、その後10秒近く
+       棚を最大200msに張り付かせる】。詰まりは夜ほど起きるので、
+       「たまにワープ」を消す代わりに「常時0.2秒の遅れ」を買っていた —— 悪い取引。
+       v231の固定115ms(利用者評「ほぼ完璧」)へ戻す。
+       ★届き間隔の実測【だけ】は診断用に残す(棚には使わない)。 */
     if (_prevBT) {
       const _gap = net.bT - _prevBT;
-      if (_gap > 0 && _gap < 1000) net._gapPk = Math.max(_gap, (net._gapPk || 65) * 0.9966);
-      net._lerpMs = Math.min(200, Math.max(NET_LERP_MS, (net._gapPk || 65) + 25));
+      if (_gap > 0 && _gap < 1000) net._gapEma = (net._gapEma || 50) * 0.9 + _gap * 0.1;
     }
     diagOnSnap(net.bT);
     if (!net.a) { net.a = m; net.aT = net.bT - 1000 / NET_TICK_HZ; net.clock = net.aT; }
@@ -14033,12 +14033,9 @@ function netOnMessage(m) {
     /* ★v201: 審判が断った理由。これが無いと技は黙って不発になる。 */
     if (typeof m.m === 'string' && m.m) announce(m.m.slice(0, 40));
   } else if (m.t === 'png') {
-    /* ★v232 #468: 心拍の返事に【手元の実測補間棚】を同乗させる。審判のラグ補償
-       (撃った側優先の巻き戻し量)は今まで固定115ms前提だった —— 夜の回線で棚が
-       160ms超に伸びると毎振り40〜80msぶん補償が足りず、「画面と判定が若干ずれる」。
-       実測値を申告すれば、審判は【その人が実際に見ていた過去】まで正確に巻き戻せる。 */
-    if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k,
-      sh: Math.round(net._lerpMs || NET_LERP_MS) }));
+    /* ★v233 #469: 棚が固定に戻ったので申告(sh)は不要 —— 審判は今まで通り
+       固定115msを前提に巻き戻す。(審判側は sh が来なくても動く作りのまま残す) */
+    if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k }));
     net.ping = m.rtt || 0;
     const badge = $('netBadge');
     if (badge && net.on) {
@@ -14086,7 +14083,7 @@ function netStart(m) {
   net._cutDoneT = 0;   /* ★v220 #453 */
   net._vgOk = true;   /* ★v222 #456c: 縦ズレの一呼吸 */
   net._bigT0 = 0;     /* ★v231 #466: 大ズレ我慢比べの計時 */
-  net._gapPk = 65; net._lerpMs = NET_LERP_MS;   /* ★v232 #467b: 棚の実測連動 */
+  net._gapEma = 50;   /* ★v233 #469: 届き間隔の実測(診断用。棚には使わない) */
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -14222,7 +14219,7 @@ function netApplySnapshots(dt) {
   /* ★★v199: 再生はサーバーの拍の上を、実時間で等速に進む。
      ★遅れ具合は【位置を飛ばして】ではなく【進む速さのごく僅かな加減】で直す。
        飛ばして合わせると、そこで必ず一度カクつく —— それを避けるのが目的。 */
-  const want = net.bBeat - (net._lerpMs || NET_LERP_MS);   // 目標: 最新の拍より一定だけ後ろ(★v232: 棚は実測連動)
+  const want = net.bBeat - NET_LERP_MS;         // 目標: 最新の拍より一定だけ後ろ(★v233: 固定に復帰)
   if (net.play === undefined || Math.abs(want - net.play) > 600) net.play = want;
   const rate = clamp(1 + (want - net.play) / 500, 0.9, 1.1);
   net.play += dt * 1000 * rate;
@@ -15356,7 +15353,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v232';
+const GAME_VERSION = 'v233';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
