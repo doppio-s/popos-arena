@@ -11,13 +11,13 @@ set -e
 export DEBIAN_FRONTEND=noninteractive
 
 echo "[1/5] 道具を入れています..."
-apt-get update -y -qq
-apt-get install -y -qq git curl ca-certificates >/dev/null
+apt-get -o DPkg::Lock::Timeout=600 update -y -qq
+apt-get -o DPkg::Lock::Timeout=600 install -y -qq git curl ca-certificates >/dev/null
 
 echo "[2/5] Node.js を入れています..."
 if ! command -v node >/dev/null 2>&1; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
-  apt-get install -y -qq nodejs >/dev/null
+  apt-get -o DPkg::Lock::Timeout=600 install -y -qq nodejs >/dev/null
 fi
 node -v
 
@@ -65,3 +65,9 @@ echo "     http://$IP/"
 echo ""
 echo "  (このURLは固定。友達にそのまま送れます)"
 echo "=============================================="
+sleep 1
+if curl -fsS --max-time 5 http://127.0.0.1/ | grep -q "GAME_VERSION"; then
+  echo "  配信テスト: OK (中身も確認できました)"
+else
+  echo "  ★配信テストに失敗。journalctl -u popos で記録を確認してください"
+fi
