@@ -4352,8 +4352,30 @@ function trySlideMove(pos, dx, dz, y, r, fighter) {
   if (Math.abs(dx) > 1e-8 && spotFree(x0 + dx, z0, y, r, passGlass)) { pos.x = x0 + dx; return; }
   if (Math.abs(dz) > 1e-8 && spotFree(x0, z0 + dz, y, r, passGlass)) { pos.z = z0 + dz; }
 }
-const BB_MOVE = 0.6;      
-const BB_HOLD = 1.5;        
+/* ★v225 #459: 敵(遠隔)の描画位置の化粧。写しは毎秒20回の点で、点と点を直線でつなぐため、
+   角を曲がる敵は壁の角をほんの少し串刺しにして見える(審判上ではめり込んでいない)。
+   描画へ渡す直前に壁の外へ1回だけ押し出す。窓ガラスには触らない(割る副作用を避ける)。
+   ★v204の教訓: 「壁の中の写しを【捨てる】」と敵が凍る — 捨てずに【ずらす】のが正解。 */
+const _nbClamp = [];
+function clampRemoteVisual(x) {
+  const boxes = nearBoxes(x.pos.x, x.pos.z, _nbClamp);
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    if (b.glassRef) continue;
+    if (x.y >= b.h - 0.01) continue;
+    if (x.y + 1.65 <= (b.y0 || 0)) continue;
+    if (b.standable && b.h - x.y <= stepOverOf(b)) continue;
+    const dx = x.pos.x - b.x, dz = x.pos.z - b.z;
+    const ox = b.hw + 0.3 - Math.abs(dx);
+    const oz = b.hd + 0.3 - Math.abs(dz);
+    if (ox > 0 && oz > 0) {
+      if (ox < oz) x.pos.x += (dx >= 0 ? ox : -ox);
+      else x.pos.z += (dz >= 0 ? oz : -oz);
+    }
+  }
+}
+const BB_MOVE = 0.6;
+const BB_HOLD = 1.5;
 const BB_KEEP = 6;          
 const bb = { t: 0, stuckT: 0, armed: true, rows: [], sentPrev: 0, rateT: 0, rate: 0, hidden: false };
 function bbReset() { bb.t = 0; bb.stuckT = 0; bb.armed = true; bb.rows.length = 0; bb.rate = 0; bb.sentPrev = 0; bb.rateT = 0; bb.hidden = false; const e = $('blackBox'); if (e) e.classList.add('hidden'); }
@@ -14147,6 +14169,7 @@ function netApplySnapshots(dt) {
       /* ★v204: 写しの位置をそのまま使う。壁判定で捨てると相手が出現地点に凍る。 */
       x.pos.x = gx; x.y = gy; x.pos.z = gz;
       x.facing = netLerpAngle(ra[4], rb[4], u);
+      if (x.alive) clampRemoteVisual(x);   /* ★v225 #459: 角の串刺しだけ描画で直す */
       const fresh = u < 1;
       const dx = fresh ? clamp(vx / 6, -1, 1) : 0;
       const dz = fresh ? clamp(vz / 6, -1, 1) : 0;
@@ -15200,7 +15223,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v224';
+const GAME_VERSION = 'v225';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
