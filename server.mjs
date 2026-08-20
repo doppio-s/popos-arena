@@ -743,6 +743,40 @@ attachWs(server, {
          ★範囲は広めに取って、体からの距離の制限は index.html 側(AIM_ORIGIN_MAX)で
            掛ける —— "どこまで許すか"の判断は世界の側に1つだけ置く。 */
       n.ax = fin(m.ax, -600, 600); n.ay = fin(m.ay, -100, 400); n.az = fin(m.az, -600, 600);
+      /* ★★★v223 #457: 【移動は手元が正】方式。手元が報告してきた自分の位置を、
+         検問(速度・壁抜け・世界の外・技の妥当性)を通る限りそのまま採用する。
+         いままでの「審判が計算し直して答え合わせ」は、どれだけ磨いても
+         引き戻し・見えない壁として残った(手元30fpsと審判の積分差が構造的に消えないため)。
+         マイクラのサーバーやGTA Online等と同じ割り切りに切り替える:
+         移動 = 手元が正 / 戦闘・体力・技の判定 = これまで通り審判が正。
+         ★検問で弾く物: ワープ級の速さ(技中でない時)、壁・建物の中、世界の外、
+           吹き飛ばされ中(審判の物理が正)、リワインド演出中、気絶中。
+         ★古い手元(px無し)からの入力は今まで通りの答え合わせ方式で動く(後方互換)。 */
+      if (Number.isFinite(+m.px) && Number.isFinite(+m.py) && Number.isFinite(+m.pz)) {
+        const fp2 = c.fighter, modA = c.room && c.room.mod;
+        const nowA = Date.now();
+        const dtA = Math.min(0.25, Math.max(0.008, (nowA - (c._accT || nowA - 33)) / 1000));
+        c._accT = nowA;
+        if (fp2 && fp2.alive && modA
+            && !(fp2.knock && fp2.knock.lengthSq && fp2.knock.lengthSq() > 0.04)
+            && !(fp2.stunT > 0.05)
+            && !modA.world.btdCut && !modA.world.btdRewind) {
+          const pxA = fin(m.px, -600, 600), pyA = fin(m.py, -50, 400), pzA = fin(m.pz, -600, 600);
+          const ddx = pxA - fp2.pos.x, ddy = pyA - fp2.y, ddz = pzA - fp2.pos.z;
+          const dh = Math.hypot(ddx, ddz);
+          const busyA = fp2.blinkT >= 0 || fp2.vaultT >= 0 || fp2.dashT > 0 || fp2.ropeT >= 0
+            || fp2.diveT > 0 || fp2.climbT > 0 || !fp2.grounded || fp2.astral;
+          const capH = (busyA ? 30 : 14) * dtA + 1.2;
+          const capV = (busyA ? 30 : 12) * dtA + 1.2;
+          if (dh <= capH && Math.abs(ddy) <= capV
+              && Math.hypot(pxA, pzA) <= modA.WORLD_R + 1
+              && modA.spotFree(pxA, pzA, pyA, 0.45)) {
+            fp2.pos.x = pxA; fp2.pos.z = pzA; fp2.y = pyA;
+          }
+          /* 検問落ち = 据え置き。審判の位置が正のままなので、手元は従来の合わせで戻される
+             (ワープチート・壁抜けチートはここで殺される) */
+        }
+      }
     } else if (m.t === 'gb') {
       /* ★★v216 #450: 手元が予測で割った窓の番号。手元だけ割れて審判に板が残ると
          「割れた窓に押し戻される見えない壁」、逆なら「板をすり抜ける」に見える。

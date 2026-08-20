@@ -14050,6 +14050,11 @@ function netSendInput(dt) {
   net.ws.send(JSON.stringify({
     t: 'in',
     q: qn,
+    /* ★★★v223 #457: 【自分の居場所】をそのまま審判へ届ける。
+       審判は速度・壁抜け・技の妥当性だけ検問して、通る限りこの位置を採用する
+       (マイクラのサーバーやGTA Online等と同じ「移動は手元が正」方式)。
+       答え合わせが無くなるので、引き戻し・見えない壁は原理的に起こらない。 */
+    px: r2(p.pos.x), py: r2(p.y), pz: r2(p.pos.z),
     mx: r2(smx), mz: r2(smz),
     f: r2(Math.atan2(r.ux, r.uz)), dy: r2(r.dy),
     atk: !!p.attackHeld, stand: !!p.standOn, crouch: !!p.crouch,
@@ -15195,7 +15200,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v222';
+const GAME_VERSION = 'v223';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
