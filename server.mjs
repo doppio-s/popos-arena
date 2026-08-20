@@ -230,6 +230,11 @@ async function makeRoom(members) {
     m.sock.send(JSON.stringify({ t: 'start', room: id, seed, map, slot: i, roster,
       humans: members.filter(Boolean).length, sv: ENGINE_VER }));
   });
+  /* ★v213 #442: 計測用 —— NOBOTS=1 で立てたサーバーはCPUの敵と刺客を眠らせる。
+     ネット品質の物差しから戦闘の乱数(殴られて飛ばされた分)を取り除くため。本番では使わない。 */
+  if (process.env.NOBOTS) {
+    for (const f of mod.world.fighters) if (!f.netInput) { f.alive = false; f.hp = 0; }
+  }
   rooms.set(id, room);
   console.log(`[部屋] ${id} 開始 — 人${members.filter(Boolean).length}人 / CPU${ROOM_MAX - members.filter(Boolean).length}人 / ${map} / 種${seed}`);
   return room;
@@ -678,6 +683,8 @@ attachWs(server, {
          写しに載せて返す = 手元は「同じ時点どうし」で較べられる。 */
       { const q = +m.q; if (Number.isFinite(q) && q > (n.q || 0)) n.q = Math.min(2e9, q); }
       n.mx = fin(m.mx, -1, 1); n.mz = fin(m.mz, -1, 1);
+      /* ★#441は実測で棄却: 入力を平均すると「q番まで反映」の返事と中身がズレて、
+         曲がるたび偽の誤差を自分で作っていた(敵なし計測で42m/45秒のドラグ)。最新1個に戻す。 */
       n.facing = fin(m.f, -Math.PI * 2, Math.PI * 2); n.dy = fin(m.dy, -8, 8);
       n.atk = !!m.atk; n.stand = !!m.stand; n.crouch = !!m.crouch;
       /* 押した瞬間の物は【消えるまで残す】 —— 1回ぶんの入力を落とさないため */

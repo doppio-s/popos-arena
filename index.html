@@ -13494,7 +13494,7 @@ function netApplyHumans(n) {
      毎回「ずれ」に見えて、指を離した瞬間に引き戻される(v195/196の失敗)。
    ★測ったずれはその場で当てず、いったん溜めて毎フレーム少しずつ返す。
      一気に当てると、そこで必ずカクつく。 */
-const NET_FIX_DEAD = 0.45;        // これ以下のずれは直さない(1拍ぶんの誤差)
+const NET_FIX_DEAD = 0.70;   /* ★v214 #443: 20Hzと60fpsの積分差(曲がり中～0.5m)を丸ごと飲み込む広さに */        // これ以下のずれは直さない(1拍ぶんの誤差)
 const NET_FIX_SNAP = 4.00;        // これ以上は一瞬で合わせる(復活・打ち上げ・転送)
 const NET_FIX_BACK = 6.0;         // 溜めたずれを返す速さ(約1/6秒で戻る)
 function netAckSeq(snap) {
@@ -13541,6 +13541,7 @@ function netMeasureError(snap) {
       knock: p.knock && p.knock.length ? +p.knock.length().toFixed(1) : 0,
       dash: p.dashT > 0 ? 1 : 0, vault: p.vaultT >= 0 ? 1 : 0, air: p.grounded ? 0 : 1 });
     p.pos.x += ex; p.y += ey; p.pos.z += ez;
+    net.fixApplied = (net.fixApplied || 0) + eh + Math.abs(ey);   /* ★v214: 計器はドカン分も足す */
     p.vy = 0;
     pushOut(p.pos, 0.55, p.y, p);
     /* ★★★v206 #421: 直したぶんを【まだ返事の来ていない控え】にも足す。
@@ -13561,9 +13562,14 @@ function netMeasureError(snap) {
      ★ただし返す速さは下の netDrainError で歩く速さの2割までに絞る =
        体感はわずかな重さだけで、ドカンは二度と来ない。 */
   const f = net.fix || (net.fix = { x: 0, y: 0, z: 0 });
-  f.x = eh > NET_FIX_DEAD ? ex : 0;
-  f.z = eh > NET_FIX_DEAD ? ez : 0;
-  f.y = Math.abs(ey) > NET_FIX_DEAD ? ey : 0;
+  /* ★v214 #443: 【超過分だけ】返す。全額返すと、誤差が線を越える→全部戻す→また育つ→
+     また戻す…の鋸歯運動になり、曲がっている間じゅう毎秒0.5m級のドラグ=「巻き戻し」の
+     残りの正体だった(敵なし計測で45秒22〜47m)。超過分だけなら誤差は線の内側で
+     安定し、引きずりはほぼ消える。大きな本物のズレは超過分が大きいので今まで通り返る。 */
+  const exs = eh > NET_FIX_DEAD ? (eh - NET_FIX_DEAD) / eh : 0;
+  f.x = ex * exs;
+  f.z = ez * exs;
+  f.y = Math.abs(ey) > NET_FIX_DEAD ? ey - Math.sign(ey) * NET_FIX_DEAD : 0;
   net.fixErr = eh;
 }
 function netDrainError(dt) {
@@ -13595,6 +13601,7 @@ function netDrainError(dt) {
     }
   }
   p.pos.x += cx; p.pos.z += cz; p.y += cy;
+  net.fixApplied = (net.fixApplied || 0) + Math.hypot(cx, cz) + Math.abs(cy);   /* ★v214: 補正適用量の積算計 */
   /* ★v206 #421: 少しずつ返す方も同じ —— 動かしたぶんは控えにも足す(二重取り防止) */
   const hh = net.hist;
   if (hh) for (let hI = 0; hI < hh.length; hI++) { hh[hI].x += cx; hh[hI].y += cy; hh[hI].z += cz; }
@@ -15011,7 +15018,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v213';
+const GAME_VERSION = 'v214';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
