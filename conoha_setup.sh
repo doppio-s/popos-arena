@@ -40,7 +40,44 @@ if command -v ufw >/dev/null 2>&1; then
   ufw status | head -1 || true
 fi
 
-echo "[5/6] 常時稼働の仕組み(systemd)を設定しています..."
+echo "[5/7] 自動更新(2分ごとにGitHubを見て、変わっていたら取り直して再起動)を設定しています..."
+# ★これを入れると、以後の更新は「GitHubに新しい版を置くだけ」で勝手に反映される。
+#   SSHでコマンドを貼る作業は二度と要らない。
+cat > /opt/popos_update.sh <<'UPD'
+#!/bin/bash
+cd /opt/popos || exit 0
+git fetch --depth 1 origin main >/dev/null 2>&1 || exit 0
+L=$(git rev-parse HEAD 2>/dev/null); R=$(git rev-parse origin/main 2>/dev/null)
+if [ -n "$R" ] && [ "$L" != "$R" ]; then
+  git reset --hard origin/main >/dev/null 2>&1
+  systemctl restart popos
+  echo "$(date -Is) updated to $R" >> /var/log/popos_update.log
+fi
+UPD
+chmod +x /opt/popos_update.sh
+cat > /etc/systemd/system/popos-update.service <<'UNIT2'
+[Unit]
+Description=POPO auto-update (pull from GitHub if changed)
+
+[Service]
+Type=oneshot
+ExecStart=/opt/popos_update.sh
+UNIT2
+cat > /etc/systemd/system/popos-update.timer <<'UNIT3'
+[Unit]
+Description=POPO auto-update timer
+
+[Timer]
+OnBootSec=60
+OnUnitActiveSec=120
+
+[Install]
+WantedBy=timers.target
+UNIT3
+systemctl daemon-reload
+systemctl enable --now popos-update.timer >/dev/null 2>&1
+
+echo "[6/7] 常時稼働の仕組み(systemd)を設定しています..."
 cat > /etc/systemd/system/popos.service <<'UNIT'
 [Unit]
 Description=POPO'S LAST SURVIVOR game server
@@ -61,7 +98,7 @@ systemctl daemon-reload
 systemctl enable popos >/dev/null 2>&1
 systemctl restart popos
 
-echo "[6/6] 起動確認中..."
+echo "[7/7] 起動確認中..."
 sleep 3
 if ! systemctl is-active --quiet popos; then
   echo "★起動に失敗。ログ:"; journalctl -u popos --no-pager | tail -20; exit 1
