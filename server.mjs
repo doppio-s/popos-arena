@@ -645,6 +645,12 @@ const server = http.createServer((req, res) => {
            という一番効く制限は掛かる。 */
     res.writeHead(200, {
       'Content-Type': type,
+      /* ★★★v218: キャッシュ全面禁止。今まで鮮度ヘッダが一切無く、ブラウザは
+         「前もらった古いHTML」を勝手に使い回せた —— サーバーを何度直しても
+         手元だけ古い版で遊ぶ = 「直したのに直ってない」「判定がおかしい」の温床。
+         本体は700KBなので毎回取り直しても一瞬。 */
+      'Cache-Control': 'no-store, must-revalidate',
+      'Pragma': 'no-cache',
       'X-Content-Type-Options': 'nosniff',
       'Referrer-Policy': 'no-referrer',
       'Content-Security-Policy': CSP,
