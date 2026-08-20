@@ -1727,7 +1727,11 @@ function finalizeBatches() {
   _batchEmissive = {};
 }
 const MAP_DEFS = [
-  { id: 'venezia', name: 'ヴェネツィア', hint: '運河と橋の町。水が道を切る',
+  /* ★v217: ヴェネツィアは【引退】(利用者「もうヴェツィア消そう バグの温床」)。
+     ハードスナップ記録9件中5件がこの地図(橋の上下±7.9mの縦ヤンク、運河ぎわの引っかかり)。
+     ★定義ごと消さないのは、古い審判が map:'venezia' を指定してきた時に
+       別の町を建てて黙って食い違う事故を防ぐため。戻す時は retired を外すだけ。 */
+  { id: 'venezia', name: 'ヴェネツィア', hint: '運河と橋の町。水が道を切る', retired: true,
     sky: 0x3fb8aa, fogNear: 70, fogFar: 170,
     hemiSky: 0xcfffee, hemiGround: 0x7a6a55, sun: 0xffd98a, sunPow: 1.25,
     walls: 'venezia', build: buildVenezia },
@@ -1748,10 +1752,12 @@ const MAP_DEFS = [
     hemiSky: 0xdff0ff, hemiGround: 0x5d6670, sun: 0xffeccc, sunPow: 1.25,
     walls: 'city', build: buildMinato },
 ];
-const mapDefOf = (id) => MAP_DEFS.find((m) => m.id === id) || MAP_DEFS[0];
+/* ★v217: 名指しなら引退地図も建てる(古い審判との互換)。見つからない時の代役は現役から選ぶ */
+const mapDefOf = (id) => MAP_DEFS.find((m) => m.id === id) || MAP_DEFS.find((m) => !m.retired) || MAP_DEFS[0];
 function pickMapId(prev) {
-  const pool = MAP_DEFS.filter((m) => m.id !== prev);
-  return randPick(pool.length ? pool : MAP_DEFS).id;
+  const act = MAP_DEFS.filter((m) => !m.retired);   /* ★v217: おまかせは現役だけから */
+  const pool = act.filter((m) => m.id !== prev);
+  return randPick(pool.length ? pool : act).id;
 }
 const WALL_POOLS = {};   
 function applyMapLook(def) {
@@ -8084,7 +8090,7 @@ const world = {
   orbs: [],
   orbRespawn: [],
   orbStopped: false,   
-  mapId: 'venezia',    
+  mapId: 'cairo',   /* ★v217: 初期値も現役地図に(veneziaは引退) */    
   timeStop: null,      
   tsTickAcc: 0,
   tsResolving: false,  
@@ -15090,7 +15096,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v216';
+const GAME_VERSION = 'v217';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -15205,7 +15211,8 @@ function buildMapCards() {
   if (!wrap) return;
   wrap.innerHTML = '';
   const items = [{ id: null, name: 'おまかせ', hint: '毎試合ランダム' }].concat(
-    MAP_DEFS.map((m) => ({ id: m.id, name: m.name, hint: m.hint })));
+    MAP_DEFS.filter((m) => !m.retired)   /* ★v217: 引退地図は選択肢にも出さない */
+      .map((m) => ({ id: m.id, name: m.name, hint: m.hint })));
   for (const it of items) {
     const card = document.createElement('div');
     card.className = 'mapCard' + (it.id === selectedMap ? ' selected' : '');

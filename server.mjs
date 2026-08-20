@@ -136,7 +136,9 @@ function applyLag(m, rttMs, mod) {
   if (m.fighter && m.fighter.netInput) m.fighter.netInput.lag = lag;
   return lag;
 }
-const MAPS = ['venezia', 'cairo', 'colosseo', 'skyline'];
+/* ★v217: veneziaは引退(利用者の指示。バグ記録の大半がこの地図だった)。
+   戻す時はここに 'venezia' を足し、index.html の MAP_DEFS から retired を外す。 */
+const MAPS = ['cairo', 'colosseo', 'skyline'];
 
 let roomN = 0, modN = 0;
 const rooms = new Map();       // id -> room
