@@ -13625,10 +13625,14 @@ function netMeasureError(snap) {
      また戻す…の鋸歯運動になり、曲がっている間じゅう毎秒0.5m級のドラグ=「巻き戻し」の
      残りの正体だった(敵なし計測で45秒22〜47m)。超過分だけなら誤差は線の内側で
      安定し、引きずりはほぼ消える。大きな本物のズレは超過分が大きいので今まで通り返る。 */
-  const exs = eh > NET_FIX_DEAD ? (eh - NET_FIX_DEAD) / eh : 0;
+  /* ★v219 #452: 許容幅を【手元の1コマの長さ】に合わせて広げる(60fps=×1.0〜30fps=×1.6上限)。
+     0.70mは60fps機で測った「20Hzとの積分差」。30fps機は手元の物理が倍粗く、
+     曲がるだけで55〜87cmズレる(実記録) —— 0.70のままだと常時引きずりになる。 */
+  const effDead = NET_FIX_DEAD * Math.min(1.6, Math.max(1, (net._dtEma || 0.0167) / 0.0167));
+  const exs = eh > effDead ? (eh - effDead) / eh : 0;
   f.x = ex * exs;
   f.z = ez * exs;
-  f.y = Math.abs(ey) > NET_FIX_DEAD ? ey - Math.sign(ey) * NET_FIX_DEAD : 0;
+  f.y = Math.abs(ey) > effDead ? ey - Math.sign(ey) * effDead : 0;
   net.fixErr = eh;
 }
 function netDrainError(dt) {
@@ -13871,6 +13875,7 @@ function netStart(m) {
   net.firstSync = true;   /* ★v215 #444: 最初の写しは「ズレ」ではなく「本当の開始位置」 */
   net.fastFixT = 0; net._hpPrev = undefined;   /* ★v208 #424 */
   net._protSaid = false;   /* ★v216 #448: 着地保護の案内は1試合1回 */
+  net._pvClimb = net._pvVault = net._pvAir = false;   /* ★v219 #451 */
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -13950,6 +13955,26 @@ function netSendInput(dt) {
       net.fix = null; net.fixErr = 0;
     }
   }
+  /* ★★★v219 #451: 【高さが変わる動きの入口】でも同じ猶予を張る。
+     実記録(ConoHa実プレイ4.5分でドカン9件)の大半が ey=±4.2〜4.9m = 建物1階ぶんの縦ズレ。
+     壁登り・乗り越え・棚から落ちる瞬間は、審判と手元で「登れた/まだ上に居る」の判断が
+     数コマ食い違う —— 登りは1コマ1.2mを超えない(上の#437に掛からない)ので、
+     ズレが4mまで育った瞬間に屋根から引き剥がされていた。
+     猶予は#437と同じ物: 縦横1m未満に収束した瞬間に解ける(平時の跳躍ではほぼ無償)。
+     ★ただし【被弾直後(fastFix)や吹き飛ばし中】は張らない —— 殴られて宙に浮いた時に
+       張ると、#440の「殴られたズレは一撃で映す」を殺してしまう。 */
+  {
+    const _nowW = performance.now();
+    const _hurt = (net.fastFixT && _nowW < net.fastFixT + 200)
+      || (p.knock && p.knock.lengthSq && p.knock.lengthSq() > 0.01);
+    const _climb = p.climbT > 0, _vault = p.vaultT >= 0, _air = !p.grounded;
+    if (!_hurt && ((_climb && !net._pvClimb) || (_vault && !net._pvVault) || (_air && !net._pvAir))) {
+      net.warpSeq = qn;
+      net.warpT = Math.max(net.warpT || 0, _nowW + Math.min(1000, 400 + (net.ping || 0) * 1.5));
+      net.fix = null; net.fixErr = 0;
+    }
+    net._pvClimb = _climb; net._pvVault = _vault; net._pvAir = _air;
+  }
   net.ws.send(JSON.stringify({
     t: 'in',
     q: qn,
@@ -13967,6 +13992,8 @@ function netSendInput(dt) {
 function netApplySnapshots(dt) {
   if (!net.on || !net.b) return 0;
   /* 自分のずれ返しは、写しが何本溜まっているかに関係なく毎フレーム進める */
+  /* ★v219 #452: 1コマの長さの移動平均(タブ切替の巨大dtは0.1sで頭打ち) */
+  { const _ds = Math.min(0.1, dt); net._dtEma = net._dtEma === undefined ? _ds : net._dtEma * 0.95 + _ds * 0.05; }
   netDrainError(dt);
   const q = net.q;
   if (!q || q.length < 2) return 0;
@@ -15096,7 +15123,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v218';
+const GAME_VERSION = 'v219';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
