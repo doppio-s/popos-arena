@@ -813,11 +813,14 @@ attachWs(server, {
                「二階にいたのに一階に戻される」「命中してるのに両者ノーダメ」の正体
                (審判の中の自分が別の場所で戦っているため、全員の攻撃が空振りする)。
                一段目: 位置が綺麗なら10報(約0.2秒)で追随。
-               二段目: 壁チェックが通らなくても30報(約0.6〜1秒)で強制追随 ——
-               食い違いの固定化だけは絶対に許さない。 */
+               二段目: 壁チェックが通らなくても強制追随 ——
+               食い違いの固定化だけは絶対に許さない。
+               ★v231 #466: 二段目 30報→20報(30fps機でも約0.7秒)。手元側のドカンを
+               「4m超が1.4秒続いた時だけ」に変えたので、この治癒が必ず先に届く =
+               競走そのものが消える。 */
             c._rejN = (c._rejN | 0) + 1;
             c._rejRun = (c._rejRun | 0) + 1;
-            if ((okSpot && c._rejN >= 10) || c._rejN >= 30) {
+            if ((okSpot && c._rejN >= 10) || c._rejN >= 20) {
               fp2.pos.x = pxA; fp2.pos.z = pzA; fp2.y = pyA;
               c._rejN = 0;
             }
@@ -830,11 +833,21 @@ attachWs(server, {
           if ((c._rejRun | 0) >= 30 && (!c._rejLogT || nowA - c._rejLogT > 10000)) {
             c._rejLogT = nowA; c._rejRun = 0;
             try {
+              /* ★v231 #466: 【何が】塞いだか(塞)・技の状態(状)・部屋の種(種)も採る。
+                 「窓(生)」なら板の生死のズレ、「該当なし」なら世界の外判定、
+                 種があれば同じ町を手元で組み直して再現できる。 */
+              const st2 = ((fp2.blinkT >= 0 ? '瞬' : '') + (fp2.vaultT >= 0 ? '越' : '')
+                + (fp2.dashT > 0 ? '走' : '') + (fp2.ropeT >= 0 ? '糸' : '')
+                + (fp2.diveT > 0 ? '潜' : '') + (fp2.climbT > 0 ? '登' : '')
+                + (fp2.grounded ? '' : '空') + (fp2.astral ? '幽' : '')) || '素';
+              const blame = (!okSpot && modA && typeof modA.spotBlame === 'function')
+                ? modA.spotBlame(pxA, pzA, pyA, 0.05) : '';
               const line = `[${new Date().toISOString()}] 検問棄却30連 ${String(c.name || '?').slice(0, 12)}`
                 + ` spot=${okSpot ? 'OK' : 'NG'} dh=${dh.toFixed(1)} dy=${ddy.toFixed(1)}`
                 + ` 報告=(${pxA.toFixed(1)},${pyA.toFixed(1)},${pzA.toFixed(1)})`
                 + ` 審判=(${fp2.pos.x.toFixed(1)},${fp2.y.toFixed(1)},${fp2.pos.z.toFixed(1)})`
-                + ` 地図=${(c.room && c.room.map) || '?'}\n`;
+                + ` 状=${st2}` + (blame ? ` 塞=${blame}` : '')
+                + ` 地図=${(c.room && c.room.map) || '?'} 種=${(c.room && c.room.seed) || '?'}\n`;
               import('fs').then((fsm) => {
                 try {
                   const F = 'バグ記録.txt';

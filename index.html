@@ -4283,6 +4283,26 @@ function spotFree(x, z, y, r, passGlass) {
   }
   return true;
 }
+/* ★v231 #466: 検問(spotFree)が「立てない」と言った時、【どの箱が】塞いだかを
+   一言で返す(記録専用・審判の棄却ログから呼ぶ)。規則は spotFree と鏡写し。
+   「窓(生)」が出たら = 手元では割れているのに審判では生きている板、のズレが濃厚。
+   「該当なし」で棄却されていたら = 世界の外(WORLD_R)の側で弾かれている。 */
+const _nbBlame = [];
+function spotBlame(x, z, y, r) {
+  const boxes = nearBoxes(x, z, _nbBlame);
+  for (let i = 0; i < boxes.length; i++) {
+    const b = boxes[i];
+    if (y >= b.h - 0.01) continue;
+    if (y + 1.65 <= (b.y0 || 0)) continue;
+    if (b.standable && b.h - y <= stepOverOf(b)) continue;
+    if (b.glassRef && !b.glassRef.alive) continue;
+    if (Math.abs(x - b.x) < b.hw + r && Math.abs(z - b.z) < b.hd + r)
+      return (b.glassRef ? '窓(生)' : b.standable ? '段' : '壁')
+        + ` 心=(${b.x.toFixed(1)},${b.z.toFixed(1)}) 寸=${(b.hw * 2).toFixed(1)}x${(b.hd * 2).toFixed(1)}`
+        + ` 高=${(b.y0 || 0).toFixed(1)}〜${b.h.toFixed(1)}`;
+  }
+  return '該当なし';
+}
 const UNSTUCK_T = 0.08;
 const UNSTUCK_MAX_R = 24.0;
 function trappedAt(x, z, y) {
@@ -13710,6 +13730,20 @@ function netMeasureError(snap) {
     return;
   }
   if (eh > NET_FIX_SNAP || Math.abs(ey) > NET_FIX_SNAP) {
+    /* ★★v231 #466: 即ドカンを【我慢比べ】に変える。
+       v223で移動の正は手元へ移った = 4m超の大ズレの大半は「審判側の写しの取り残され」
+       であり、v230の二段復帰が0.6〜1秒で【審判の側を】治す。従来の即ドカンはその治癒と
+       競走していて、負けた回だけ利用者が引き戻される —— 「うまく行く時と戻される時がある」
+       の残りの正体(実記録 13:00:14 cairo ey=4.1: 縁から降りた手元 vs 屋根に残った審判)。
+       ・吹き飛ばされ中/気絶中 = 審判が正の窓なので従来どおり即従う。
+       ・それ以外は 4m超が【1.4秒続いた】時だけ従う。二段復帰は遅い機でも約0.9秒で
+         届くので、正しい手元が引き戻されることは無くなり、本物の転送・異常だけが残る。 */
+    const svAuth = (p.knock && p.knock.lengthSq && p.knock.lengthSq() > 0.04) || p.stunT > 0.05;
+    if (!svAuth) {
+      if (!net._bigT0) net._bigT0 = performance.now();
+      if (performance.now() - net._bigT0 < 1400) { net.fix = null; net.fixErr = eh; return; }
+    }
+    net._bigT0 = 0;
     if (typeof netBugReport === 'function') netBugReport('hardsnap', `eh=${eh.toFixed(1)} ey=${ey.toFixed(1)}`);
     if (globalThis.__snapLog) globalThis.__snapLog.push({ t: world.matchT, eh, hp: p.hp,
       knock: p.knock && p.knock.length ? +p.knock.length().toFixed(1) : 0,
@@ -13732,6 +13766,7 @@ function netMeasureError(snap) {
     net.warpT = performance.now() + Math.min(1000, 400 + (net.ping || 0) * 1.5);
     return;
   }
+  net._bigT0 = 0;   /* ★v231 #466: 4m未満へ収束 = 競走は治癒側が勝った。計時をリセット */
   /* ★★★v207 #422: v204は「走行中はズレを一切返さない」だったが、
      走って曲がるだけで毎秒0.3mほどズレが【溜まり続け】、3mに達した瞬間
      ハードスナップで一気に引き戻されていた(綺麗な回線でも約10秒に1回を実測)。
@@ -14011,6 +14046,7 @@ function netStart(m) {
   net._pvClimb = net._pvVault = net._pvAir = false;   /* ★v219 #451 */
   net._cutDoneT = 0;   /* ★v220 #453 */
   net._vgOk = true;   /* ★v222 #456c: 縦ズレの一呼吸 */
+  net._bigT0 = 0;     /* ★v231 #466: 大ズレ我慢比べの計時 */
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -15280,7 +15316,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v230';
+const GAME_VERSION = 'v231';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
