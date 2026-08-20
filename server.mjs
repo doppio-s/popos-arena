@@ -88,7 +88,26 @@ const CSP_ADS =
   "frame-ancestors 'none'; base-uri 'none'; form-action 'none'";
 const CSP = ADS_ON ? CSP_ADS : CSP_STRICT;
 
-const ROOM_LIMIT = Number(process.env.ROOMS || 4);
+/* ★★v234 #470: 運用の数字を【gitから】変えられるようにする。
+   ★これまで部屋数は systemd の Environment=ROOMS=6 に直書きで、変えるにはSSHが要った ——
+     人が集まっている最中に増やせないのは公開時に致命的。
+   ★リポジトリ同梱の runtime.json を起動時に読み、【環境変数より優先】する。
+     自動更新(popos-update.timer)はgitに変化があるとサービスを再起動するので、
+     runtime.json を書き換えて上げるだけで約2分後に反映される。
+   ★壊れたJSONや変な値でも落ちない: 読めなければ黙って今まで通りの既定値に戻る。 */
+const RUNTIME = (() => {
+  try {
+    const o = JSON.parse(fs.readFileSync(path.join(HERE, 'runtime.json'), 'utf8'));
+    return (o && typeof o === 'object') ? o : {};
+  } catch (e) { return {}; }
+})();
+const rtNum = (key, envV, def, lo, hi) => {
+  const v = Number(RUNTIME[key]);
+  if (Number.isFinite(v) && v >= lo && v <= hi) return Math.floor(v);
+  const e = Number(envV);
+  return Number.isFinite(e) && e >= lo && e <= hi ? Math.floor(e) : def;
+};
+const ROOM_LIMIT = rtNum('rooms', process.env.ROOMS, 4, 1, 40);
 /* ★★★v170 #341: 公開する時の【蓋】。どれも「まともな客なら絶対に超えない」線に置く。
    ★数字の根拠:
      ・入力は毎秒20〜30通。120にしておけば、遅れて溜まった分が一気に来ても足りる
@@ -96,8 +115,8 @@ const ROOM_LIMIT = Number(process.env.ROOMS || 4);
      ・全体400人 = 4部屋(32人)の10倍。待合室が膨らんでも耐える
    ★超えた相手は黙って切る。理由を返すと、探る側に手がかりを与える。 */
 const MSG_PER_SEC = 120;          // 1人が1秒に送ってよい電文の数
-const IP_LIMIT = Number(process.env.IP_LIMIT || 8);    // 同じIPからの同時接続
-const CONN_LIMIT = Number(process.env.CONNS || 400);   // 全体の同時接続
+const IP_LIMIT = rtNum('ipLimit', process.env.IP_LIMIT, 8, 1, 64);      // 同じIPからの同時接続
+const CONN_LIMIT = rtNum('conns', process.env.CONNS, 400, 8, 4000);     // 全体の同時接続
 const NAME_MAX = 12;
 const FILL_WAIT_S = 15;        // これだけ待っても埋まらなければCPUで埋めて開始
 const SNAP_HZ = 20;            // 写しを配る回数(v113)
@@ -959,7 +978,8 @@ server.listen(PORT, () => {
   console.log(`POPO'S LAST SURVIVOR サーバー起動 — http://localhost:${PORT}/`);
   console.log(`  審判エンジンの版: ${ENGINE_VER} (index.html を差し替えたら立ち上げ直すこと)`);
   console.log(`  1部屋 ${ROOM_MAX}人 / ${FILL_WAIT_S}秒で埋まらなければCPUが埋める`);
-  console.log(`  同時に立てられる部屋: ${ROOM_LIMIT}(環境変数 ROOMS で変えられる)`);
+  console.log(`  同時に立てられる部屋: ${ROOM_LIMIT}(runtime.json の rooms、次点で環境変数 ROOMS)`
+    + ` / 上限${ROOM_LIMIT * 8}人 · 接続の蓋${CONN_LIMIT}`);
   console.log('  同じWi-Fiの人は  http://<このPCのIP>:' + PORT + '/  を開く');
 });
 export { server, rooms, waiting, makeRoom, applyLag, clients };
