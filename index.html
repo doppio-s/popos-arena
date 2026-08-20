@@ -3339,17 +3339,27 @@ function addVaultWin(g, hx, hz, floorY) {
   town.windows.push(w);
   return w;
 }
+let _glassFromNet = false;   /* ★v216 #450: いま審判の写しを反映している最中か */
 function breakGlass(g) {
   if (!g.alive) return;
   g.alive = false;
   g.mesh.visible = false;
   g._predT = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
-  g.box.dead = true;                       
+  g.box.dead = true;
   const i = town.buildings.indexOf(g.box);
   if (i >= 0) town.buildings.splice(i, 1);
   const gy = ((g.y0 || 0) + (g.y1 || 2)) / 2;
   spawnBurst(new THREE.Vector3(g.cx, gy, g.cz), 0xbfe8ff, { n: 14, speed: 4, up: 3, life: 0.55, size: 0.08 });
   sfx.glass(volAt(new THREE.Vector3(g.cx, gy, g.cz)));
+  /* ★★v216 #450: 手元の予測で割った窓は【番号で審判にも伝える】。
+     手元だけ割れて審判に板が残ると、割れたはずの窓に押し戻される「見えない壁」、
+     1.1秒後には板がすっと生き返る —— v187から残っていた「窓の食い違い」の残党。
+     審判側は本人が窓から6m以内の時だけ信じる(server.mjs の 'gb' 受け口)。 */
+  if (!_glassFromNet && typeof netRemote === 'function' && netRemote()
+      && net.ws && net.ws.readyState === 1) {
+    const gi = town.glassList ? town.glassList.indexOf(g) : -1;
+    if (gi >= 0) { try { net.ws.send(JSON.stringify({ t: 'gb', i: gi })); } catch (e) {} }
+  }
 }
 function restoreGlassNear(pos, radius) {
   let n = 0;
@@ -6051,6 +6061,10 @@ class Fighter {
     this.stunT = 0;
     this.slowT = 0;
     this.invulnT = 0;
+    /* ★v216 #448: 着地保護。途中参加の置き直し直後だけ審判が付ける「被弾しない」時間。
+       invulnT と分けたのは、invulnT が【窓をすり抜ける】性質(passGlass)を持つから ——
+       審判だけが知る長い invulnT は、手元との窓の食い違い=見えない壁/すり抜けの種になる。 */
+    this.protT = 0;
     this.hitFlashT = 0;
     this.regenDelay = 0;
     this.moveDir = new THREE.Vector3();
@@ -6337,6 +6351,7 @@ class Fighter {
       return;
     }
     if (this.invulnT > 0) return;
+    if ((this.protT || 0) > 0) return;   /* ★v216 #448: 着地保護中は被弾しない */
     if (crimsonOwner(this)) return;
     if (heavenActive(this)) return;            
     const dodges = this.def.id === 'kagemitsu';          
@@ -7365,7 +7380,8 @@ class Fighter {
     this.stunT = Math.max(0, this.stunT - dt);
     this.slowT = Math.max(0, this.slowT - dt);
     this.invulnT = Math.max(0, this.invulnT - dt);
-    this.rageT = Math.max(0, (this.rageT || 0) - dt);   
+    this.protT = Math.max(0, (this.protT || 0) - dt);   /* ★v216 #448 */
+    this.rageT = Math.max(0, (this.rageT || 0) - dt);
     this.fleeT = Math.max(0, (this.fleeT || 0) - dt);   
     this.hitFlashT = Math.max(0, this.hitFlashT - dt);
     this.regenDelay = Math.max(0, this.regenDelay - dt);
@@ -7681,7 +7697,7 @@ class Fighter {
     }
     const flash = this.hitFlashT > 0;
     const slowed = this.slowT > 0;
-    const inv = this.invulnT > 0 && Math.sin(performance.now() * 0.05) > 0;
+    const inv = (this.invulnT > 0 || (this.protT || 0) > 0) && Math.sin(performance.now() * 0.05) > 0;
     this.mesh.traverse((o) => {
       if (o.isMesh && o.material && o.material.emissive !== undefined && o.material.emissive.setRGB) {
         if (flash) { o.material.emissive.setRGB(0.9, 0.9, 0.9); o.material.emissiveIntensity = 0.9; }
@@ -13317,11 +13333,19 @@ function snapshotWorld() {
     /* 末尾は【何番の指示まで反映したか】。手元の先読みと突き合わせる基準になる。 */
     g.push([i, Math.round(x.sp || 0), r2(Math.max(0, x.skillCd || 0)),
       r2(x.hookCharge || 0), r2(x.accelCharge || 0), r2(Math.max(0, x.spExhaust || 0)),
-      (x.netInput && x.netInput.q) | 0]);
+      (x.netInput && x.netInput.q) | 0,
+      /* ★v216 #448: 着地保護の残り(0.1秒刻み)。付けないと、保護中の敵を殴った人に
+         「当たったのに減らない」が黙って起きる —— 点滅で"守られている"と見せる。 */
+      Math.round(Math.max(0, Math.min(25, x.protT || 0)) * 10)]);
   }
   return {
     mt: r2(world.matchT || 0),
     ...(g.length ? { g } : null),
+    /* ★★v216 #450: 割れた窓の一覧を【毎写し(20Hz)】に乗せる。
+       いままで2回/秒の別便(orbs)だけだった = 審判側で割れてから最大0.5秒、
+       手元には板が残る —— 殴られて窓へ吹き飛ぶ時の「壁に引っかかる」の一因。
+       中身は割れた番号だけなので普段は数バイト。 */
+    gl: snapshotGlass(),
     ...(world.btdCut ? { cut: 1 } : null),
     ...((world.netHits && world.netHits.length) ? { hit: world.netHits.splice(0) } : null),
     ...((world.netKills && world.netKills.length) ? { kil: world.netKills.splice(0) } : null),
@@ -13382,16 +13406,18 @@ function applyGlassSnapshot(list) {
   const dead = new Set(list);
   const now = (typeof performance !== 'undefined' && performance.now) ? performance.now() : 0;
   let changed = 0;
+  _glassFromNet = true;   /* ★v216 #450: 審判発の割れを審判へ送り返さない */
   for (let i = 0; i < gl.length; i++) {
     const g = gl[i];
     if (dead.has(i)) {
       if (g.alive) { breakGlass(g); changed++; }
-      g._predT = -1e9;                     
+      g._predT = -1e9;
     } else if (!g.alive) {
       if (now - (g._predT === undefined ? -1e9 : g._predT) < GLASS_GRACE_MS) continue;
       if (reviveGlass(g)) changed++;
     }
   }
+  _glassFromNet = false;
   if (changed) { town.grid = null; buildBuildingGrid(); }
   return changed;
 }
@@ -13627,12 +13653,20 @@ function netDrainError(dt) {
       if (Math.abs(cy) > capY) cy = Math.sign(cy) * capY;
     }
   }
+  const px0 = p.pos.x, py0 = p.y, pz0 = p.pos.z;
   p.pos.x += cx; p.pos.z += cz; p.y += cy;
-  net.fixApplied = (net.fixApplied || 0) + Math.hypot(cx, cz) + Math.abs(cy);   /* ★v214: 補正適用量の積算計 */
+  /* ★★v216 #449: 補正で【壁の中へ入らない】。少しずつ返す動きは衝突を見ていなかったので、
+     審判の位置と自分の間に壁があると、体を板の中へ押し込む → 「引っかかりから抜け出した」の
+     救助ワープ(最大24m・審判は知らない)が発火 = 利用者の言う「カベすり抜け」の正体のひとつ。
+     押し込みを壁が拒んだ分は【まだ返していない】扱いに戻す(控えも実際に動いた分だけ動かす)。
+     壁の向こうが本物の位置なら誤差が育って、4mの一瞬合わせ(押し出し済み)が面倒を見る。 */
+  pushOut(p.pos, 0.55, p.y, p);
+  const acx = p.pos.x - px0, acy = p.y - py0, acz = p.pos.z - pz0;
+  net.fixApplied = (net.fixApplied || 0) + Math.hypot(acx, acz) + Math.abs(acy);   /* ★v214: 補正適用量の積算計 */
   /* ★v206 #421: 少しずつ返す方も同じ —— 動かしたぶんは控えにも足す(二重取り防止) */
   const hh = net.hist;
-  if (hh) for (let hI = 0; hI < hh.length; hI++) { hh[hI].x += cx; hh[hI].y += cy; hh[hI].z += cz; }
-  f.x -= cx; f.z -= cz; f.y -= cy;
+  if (hh) for (let hI = 0; hI < hh.length; hI++) { hh[hI].x += acx; hh[hI].y += acy; hh[hI].z += acz; }
+  f.x -= acx; f.z -= acz; f.y -= acy;
 }
 
 /* ★★v198: 遊んでいる人の手元の実測値を、サーバーの記録に流す。
@@ -13780,6 +13814,7 @@ function netOnMessage(m) {
     q.push({ s: m, beat: net.bBeat });
     while (q.length > 24) q.shift();
     netMeasureError(m);          /* ★v203: 写しが来た時だけ、ずれを測り直す */
+    if (m.gl) applyGlassSnapshot(m.gl);   /* ★v216 #450: 窓の状態も20Hzで合わせる */
     if (m.cut) world.freezeT = Math.max(world.freezeT, 1000 / NET_TICK_HZ / 1000 + 0.03);
     netFeedback(m);
   } else if (m.t === 'say') {
@@ -13829,6 +13864,7 @@ function netStart(m) {
   net.warpSeq = -1; net.warpT = 0; net._selfPrev = null;   /* ★v212 #437: 瞬間移動ワザの猶予 */
   net.firstSync = true;   /* ★v215 #444: 最初の写しは「ズレ」ではなく「本当の開始位置」 */
   net.fastFixT = 0; net._hpPrev = undefined;   /* ★v208 #424 */
+  net._protSaid = false;   /* ★v216 #448: 着地保護の案内は1試合1回 */
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -13957,6 +13993,14 @@ function netApplySnapshots(dt) {
       x.sp = r[1]; x.skillCd = r[2]; x.spExhaust = r[5];
       if (x.def.id === 'itoha') x.hookCharge = r[3];
       if (x.def.id === 'soshi') x.accelCharge = r[4];
+      /* ★v216 #448: 着地保護の残り。自分にも他人にも点滅で見せる。 */
+      if (r.length > 7) {
+        x.protT = (r[7] | 0) / 10;
+        if (r[0] === net.slot && x.protT > 0.8 && !net._protSaid) {
+          net._protSaid = true;
+          try { announce('着地保護中: しばらく攻撃を受けない'); } catch (e) {}
+        }
+      }
     }
   }
   let n = 0;
@@ -15046,7 +15090,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v215';
+const GAME_VERSION = 'v216';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

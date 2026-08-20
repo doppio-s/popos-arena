@@ -270,11 +270,23 @@ async function makeRoom(members) {
      【今の安置の内側】の空いている所へ置き直す。少しの無敵も付ける
      (置き直した直後に流れ弾で消えないだけの猶予)。
    ★レベルとチップは引き継ぐ —— 途中から入って裸一貫では、もう追いつけない。 */
-const TAKEOVER_INVUL = 2.0;         // 座った直後の無敵(秒)
+/* ★★v216 #448: 「リスポーン直後すぐ殺される」の直し。
+   v188 の無敵2秒は【席に座った瞬間】から数えていた —— でも本人の画面は
+   そこから地図を組み立てている(重いPCで1〜3秒)。見えた頃には無敵が切れ、
+   12m先の敵は走れば1.5秒で届く。= 本人には「湧いた瞬間に殺された」。
+   ★直し3点:
+     1) 保護は invulnT でなく protT(被弾だけ防ぐ)。invulnT は窓をすり抜ける性質を
+        持つので、審判だけが長く持つと手元との窓の食い違い=見えない壁の種になる。
+     2) 座った時は8秒(読み込みの上限)。【最初の入力が届いた時】= 画面が見えた時に
+        2.5秒へ縮めて、そこから数え直す。攻撃したら0.15秒で即解除(守られたまま殴れない)。
+     3) 置き直しは敵から25m以上(無ければ14m→8mと緩める)。 */
+const SEAT_PROT_LOAD = 8.0;    // 座ってから最初の入力までの保護(読み込みの上限)
+const SEAT_PROT_PLAY = 2.5;    // 最初の入力が届いてからの保護
 function takeoverSpot(mod, f) {
   const z = mod.world.zone;
   const R = Math.max(6, (z.r || 60) * 0.7);
-  for (let t = 0; t < 300; t++) {
+  for (let t = 0; t < 420; t++) {
+    const minD = t < 280 ? 25 : (t < 380 ? 14 : 8);   // ★v216: まず25m、無ければ緩める
     const a = Math.random() * Math.PI * 2;
     const r = Math.sqrt(Math.random()) * R;
     const x = (z.cx || 0) + Math.cos(a) * r, zz = (z.cz || 0) + Math.sin(a) * r;
@@ -285,7 +297,7 @@ function takeoverSpot(mod, f) {
     let near = false;
     for (const o of mod.world.fighters) {
       if (o === f || !o.alive) continue;
-      if (Math.hypot(o.pos.x - x, o.pos.z - zz) < 12) { near = true; break; }
+      if (Math.hypot(o.pos.x - x, o.pos.z - zz) < minD) { near = true; break; }
     }
     if (near) continue;                           // 敵の真隣に湧かせない
     return { x, z: zz, y: gy };
@@ -299,7 +311,8 @@ function prepareTakeover(room, f) {
   f.sp = f.maxSp;
   f.spExhaust = 0;
   f.stunT = 0; f.slowT = 0;
-  f.invulnT = Math.max(f.invulnT || 0, TAKEOVER_INVUL);
+  f.protT = SEAT_PROT_LOAD;          // ★v216 #448: 着地保護(被弾だけ防ぐ)
+  f._seatFresh = true;               //   最初の入力が届いたら SEAT_PROT_PLAY へ縮める
   if (f.knock) f.knock.set(0, 0, 0);
   try {
     const s = takeoverSpot(mod, f);
@@ -675,6 +688,20 @@ attachWs(server, {
       const n = c.fighter && c.fighter.netInput;
       if (!n) return;
       c.lastInT = Date.now();   /* ★v207 #423: 最後に入力が届いた時刻 */
+      /* ★v216 #448: 着地保護は【最初の入力が届いた時】から数え直す。
+         入力は画面が動き出すと勝手に60回/秒で流れてくる = 「見えた」合図に使える。
+         攻撃・技・奥義を押したら即解除(守られたまま殴るのは無し)。 */
+      { const ff = c.fighter;
+        if (ff && ff._seatFresh) {
+          ff._seatFresh = false;
+          ff.protT = Math.min(Math.max(ff.protT || 0, 0), SEAT_PROT_PLAY);
+          ff._seatProt = true;
+        }
+        if (ff && ff._seatProt) {
+          if (m.atk || m.skill || m.ult) { ff._seatProt = false; ff.protT = Math.min(ff.protT || 0, 0.15); }
+          else if ((ff.protT || 0) <= 0) ff._seatProt = false;
+        }
+      }
       /* ★v170 #341: 送られてくる数は【必ず有限で、決めた範囲に収める】。
          ★NaN や Infinity が1つ入るだけで、その人の座標が壊れて
            世界じゅうの計算(距離・エリア・当たり)が NaN に染まる。 */
@@ -708,6 +735,18 @@ attachWs(server, {
          ★範囲は広めに取って、体からの距離の制限は index.html 側(AIM_ORIGIN_MAX)で
            掛ける —— "どこまで許すか"の判断は世界の側に1つだけ置く。 */
       n.ax = fin(m.ax, -600, 600); n.ay = fin(m.ay, -100, 400); n.az = fin(m.az, -600, 600);
+    } else if (m.t === 'gb') {
+      /* ★★v216 #450: 手元が予測で割った窓の番号。手元だけ割れて審判に板が残ると
+         「割れた窓に押し戻される見えない壁」、逆なら「板をすり抜ける」に見える。
+         ★中身は信用しない: 実在する番号で、まだ生きていて、
+           本人がその窓から6m以内の時だけ割る(遠くの窓を割る嘘は捨てる)。 */
+      const f = c.fighter, room = c.room;
+      if (!f || !f.alive || !room || !room.mod) return;
+      const gl = room.mod.town && room.mod.town.glassList;
+      const g = gl && gl[m.i | 0];
+      if (!g || !g.alive) return;
+      if (Math.hypot(g.cx - f.pos.x, g.cz - f.pos.z) > 6) return;
+      try { room.mod.breakGlass(g); } catch (e) {}
     } else if (m.t === 'diag') {
       /* ★★v198: 遊んでいる人の手元の実測値を記録に残す。
          ★「カクつく」の一言では、絵が重いのか写しが遅れているのかが分からない。

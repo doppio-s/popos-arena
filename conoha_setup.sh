@@ -10,18 +10,18 @@
 set -e
 export DEBIAN_FRONTEND=noninteractive
 
-echo "[1/5] 道具を入れています..."
+echo "[1/6] 道具を入れています..."
 apt-get -o DPkg::Lock::Timeout=600 update -y -qq
 apt-get -o DPkg::Lock::Timeout=600 install -y -qq git curl ca-certificates >/dev/null
 
-echo "[2/5] Node.js を入れています..."
+echo "[2/6] Node.js を入れています..."
 if ! command -v node >/dev/null 2>&1; then
   curl -fsSL https://deb.nodesource.com/setup_22.x | bash - >/dev/null 2>&1
   apt-get -o DPkg::Lock::Timeout=600 install -y -qq nodejs >/dev/null
 fi
 node -v
 
-echo "[3/5] ゲームを取得しています..."
+echo "[3/6] ゲームを取得しています..."
 mkdir -p /opt
 if [ -d /opt/popos/.git ]; then
   cd /opt/popos && git fetch --depth 1 origin main && git reset --hard origin/main
@@ -30,7 +30,17 @@ else
   git clone --depth 1 https://github.com/doppio-s/popos-arena /opt/popos
 fi
 
-echo "[4/5] 常時稼働の仕組み(systemd)を設定しています..."
+echo "[4/6] 玄関(ファイアウォール)を開けています..."
+# ★ConoHaのUbuntu 24.04は ufw が【有効】で出荷される。
+#   セキュリティグループを開けても、これを開けないと外から80番に届かない
+#   (localhostだけ通る = 現地では動くのに誰も入れない罠。実際に踏んだ)。
+if command -v ufw >/dev/null 2>&1; then
+  ufw allow 80/tcp >/dev/null 2>&1 || true
+  ufw allow 22/tcp >/dev/null 2>&1 || true
+  ufw status | head -1 || true
+fi
+
+echo "[5/6] 常時稼働の仕組み(systemd)を設定しています..."
 cat > /etc/systemd/system/popos.service <<'UNIT'
 [Unit]
 Description=POPO'S LAST SURVIVOR game server
@@ -51,7 +61,7 @@ systemctl daemon-reload
 systemctl enable popos >/dev/null 2>&1
 systemctl restart popos
 
-echo "[5/5] 起動確認中..."
+echo "[6/6] 起動確認中..."
 sleep 3
 if ! systemctl is-active --quiet popos; then
   echo "★起動に失敗。ログ:"; journalctl -u popos --no-pager | tail -20; exit 1
