@@ -629,6 +629,25 @@ setInterval(async () => {
 const PUBLIC_FILES = new Set(['index.html']);
 const server = http.createServer((req, res) => {
   const url = (req.url || '/').split('?')[0];
+  /* ★v230 #465: 遠隔診断の窓口。バグ記録の末尾8KBをそのまま返す(読み取りのみ・
+     中身は座標と時刻だけで個人情報なし)。これで「遊んでもらう→SSHで貼ってもらう」の
+     往復が要らなくなり、こちらから直接記録を見に行ける。 */
+  if (url === '/buglog') {
+    let txt = '';
+    try {
+      const fp = path.join(HERE, 'バグ記録.txt');
+      const st = fs.statSync(fp);
+      const start = Math.max(0, st.size - 8192);
+      const fd = fs.openSync(fp, 'r');
+      const buf = Buffer.alloc(st.size - start);
+      fs.readSync(fd, buf, 0, buf.length, start);
+      fs.closeSync(fd);
+      txt = buf.toString('utf8');
+    } catch (e) { txt = '(まだ記録なし)'; }
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(txt);
+    return;
+  }
   const file = url === '/' ? 'index.html' : url.replace(/^\/+/, '');
   if (!PUBLIC_FILES.has(file)) { res.writeHead(404); res.end('not found'); return; }
   const full = path.join(HERE, file);
@@ -781,20 +800,48 @@ attachWs(server, {
             && Math.hypot(pxA, pzA) <= modA.WORLD_R + 1;
           if (dh <= capH && Math.abs(ddy) <= capV && okSpot) {
             fp2.pos.x = pxA; fp2.pos.z = pzA; fp2.y = pyA;
-            c._rejN = 0;
-          } else if (okSpot && stepH <= capH && stepV <= capV) {
+            c._rejN = 0; c._rejRun = 0;
+          } else if (stepH <= capH && stepV <= capV) {
             /* ★★v224 #458: 【復帰路】。v223は一度弾くと、速い移動中は審判との距離が
                開く一方で二度と受理できず、審判が出発点に置き去り→ドカンで引き戻していた。
                手元の1歩1歩は妥当(=テレポートしていない)なのに審判とだけ食い違っている時は、
                10報(約0.2〜0.3秒)続いたら手元に追随し直す。
                本物のワープチートは1歩目が非妥当(step超過)なので、この道は通れない。 */
+            /* ★★v230 #465: 復帰路を二段に。v224は「壁チェック(okSpot)も通る時だけ」
+               追随していたが、階段下・低い天井などで壁チェックが手元の当たり判定と
+               食い違うと【永遠に】審判の体が別の階に取り残される —— 利用者の
+               「二階にいたのに一階に戻される」「命中してるのに両者ノーダメ」の正体
+               (審判の中の自分が別の場所で戦っているため、全員の攻撃が空振りする)。
+               一段目: 位置が綺麗なら10報(約0.2秒)で追随。
+               二段目: 壁チェックが通らなくても30報(約0.6〜1秒)で強制追随 ——
+               食い違いの固定化だけは絶対に許さない。 */
             c._rejN = (c._rejN | 0) + 1;
-            if (c._rejN >= 10) {
+            c._rejRun = (c._rejRun | 0) + 1;
+            if ((okSpot && c._rejN >= 10) || c._rejN >= 30) {
               fp2.pos.x = pxA; fp2.pos.z = pzA; fp2.y = pyA;
               c._rejN = 0;
             }
           } else {
-            c._rejN = 0;   /* 壁の中・ワープ級の1歩 = 問答無用で据え置き */
+            c._rejN = 0;   /* ワープ級の1歩 = 問答無用で据え置き */
+            c._rejRun = (c._rejRun | 0) + 1;
+          }
+          /* ★v230 #465: 棄却の嵐は記録に残す(1人10秒に1回まで)。どの場所・どんな状態で
+             検問が手元と食い違うのかを、遊んでもらうだけで採取できる。 */
+          if ((c._rejRun | 0) >= 30 && (!c._rejLogT || nowA - c._rejLogT > 10000)) {
+            c._rejLogT = nowA; c._rejRun = 0;
+            try {
+              const line = `[${new Date().toISOString()}] 検問棄却30連 ${String(c.name || '?').slice(0, 12)}`
+                + ` spot=${okSpot ? 'OK' : 'NG'} dh=${dh.toFixed(1)} dy=${ddy.toFixed(1)}`
+                + ` 報告=(${pxA.toFixed(1)},${pyA.toFixed(1)},${pzA.toFixed(1)})`
+                + ` 審判=(${fp2.pos.x.toFixed(1)},${fp2.y.toFixed(1)},${fp2.pos.z.toFixed(1)})`
+                + ` 地図=${(c.room && c.room.map) || '?'}\n`;
+              import('fs').then((fsm) => {
+                try {
+                  const F = 'バグ記録.txt';
+                  if (!fsm.existsSync(F) || fsm.statSync(F).size < 500000) fsm.appendFileSync(F, line);
+                } catch (e) {}
+              }).catch(() => {});
+            } catch (e) {}
           }
         }
       }
