@@ -503,7 +503,7 @@ setInterval(() => {
     { const nowIn = Date.now();
       for (const mb of room.members) {
         if (!mb || !mb.fighter || !mb.fighter.netInput) continue;
-        if (mb.lastInT && nowIn - mb.lastInT > 250) {
+        if (mb.lastInT && nowIn - mb.lastInT > 450) {
           const ni = mb.fighter.netInput;
           ni.mx = 0; ni.mz = 0; ni.atk = false; ni.skillHeld = false;
         }

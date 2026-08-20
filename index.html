@@ -6351,8 +6351,12 @@ class Fighter {
         if (vanish) this.dodgeCount = (this.dodgeCount || 0) + 1;
         this.blockCount++;
         /* ★v211 #434: 剣の騎士だけ【受け成功でも精神力回復なし】(利用者の注文)。
-           時飛ばし・相手の精神力を奪う効果はそのまま。自分の回復だけ0。 */
+           時飛ばし・相手の精神力を奪う効果はそのまま。自分の回復だけ0。
+           ★v213 #439: ご褒美0でも自然回復(毎秒2000)が1.5秒後に一瞬で満タンにしていた=
+           「回復してるし」の正体。受け成功のたびに回復の再開を3秒遅らせる——
+           受け続ける限り回復ゼロ、守りをやめて3秒で回復が戻る。 */
         if (!vanish) this.gainSp(BLOCK_SP_GAIN);
+        else this.spRegenDelay = Math.max(this.spRegenDelay, 3.0);
         if (vanish && attacker && attacker !== this && attacker.alive) {
           attacker.sp = Math.max(0, attacker.sp - VANISH_SP_STEAL);
           if (attacker.isPlayer) spWarn();
@@ -7280,13 +7284,14 @@ class Fighter {
     if (!w) return false;
     { const dx0 = this.pos.x - w.cx, dz0 = this.pos.z - w.cz;
       if (Math.abs(dx0 * w.nx + dz0 * w.nz) < 0.08) return false; }
-    this.vaultWindT = VAULT_WIND;
+    /* ★v213 #438: v210の振りかぶりは別のワザ(空間喰い)への注文の取り違えだった。
+       突き破りは以前どおり【押した瞬間に実行】へ戻す。 */
     this.vaultPlanWin = w;
     this.facing = Math.atan2(w.cx - this.pos.x, w.cz - this.pos.z);
     this.swingT = -1; this.swingDone = true;
     this.blockHold = false;
     sfx.dash(0.45 * (this.isPlayer ? 1 : volAt(this.pos)));
-    return true;
+    return this._vaultGo() !== false;
   }
   _vaultGo() {
     const w = this.vaultPlanWin;
@@ -7998,6 +8003,20 @@ class Fighter {
       p.elbowR.rotation.x = -0.4;
       p.legL.rotation.x = 0.15; p.legR.rotation.x = -0.15;
       p.armL.scale.y = 1; p.armR.scale.y = 1;
+    } else if (this.trapHoldT > 0 && this.def.id === 'gou') {
+      /* ★v213 #438: 空間喰いの振りかぶり——大きな拳の右腕を頭上まで振り上げ、
+         溜め切る(0.7秒)と小さく震えて「引ける」合図。 */
+      const kW = clamp(this.trapHoldT / 0.7, 0, 1);
+      const tw = performance.now() * 0.03;
+      p.armR.rotation.x = -0.35 - 2.55 * kW + (kW >= 1 ? Math.sin(tw) * 0.06 : 0);
+      p.armR.rotation.z = -0.18 * kW;
+      p.elbowR.rotation.x = -0.2 + 0.1 * kW;
+      p.armR.scale.y = 1 + 0.15 * kW;
+      p.armL.rotation.x = -0.55 - 0.25 * kW;
+      p.armL.rotation.z = 0.4;
+      p.elbowL.rotation.x = -0.5;
+      p.legL.rotation.x = 0.35; p.legR.rotation.x = -0.35;
+      p.armL.scale.y = 1;
     } else if (this.blockHold) {
       const t = performance.now() * 0.006;
       p.armL.rotation.x = -1.35 + Math.sin(t) * 0.05;
@@ -9103,7 +9122,10 @@ const TRAP_BODY_LO = 0.25;
 const TRAP_BODY_HI = 1.85;     
 const TRAP_HOLD_MIN = 0.5;       
 const STAND_HOLD_MUL = 0.55;     
-const trapHoldMinOf = (f) => TRAP_HOLD_MIN * ((f && f.standOn) ? STAND_HOLD_MUL : 1);
+/* ★v213 #438: ゴウの空間喰いは【0.7秒の振りかぶり】が要る(利用者の注文——v210で
+   誤って窓の突き破りに付けていた)。スタンドの有無に関わらず一律0.7秒。 */
+const trapHoldMinOf = (f) => (f && f.def.id === 'gou') ? 0.7
+  : TRAP_HOLD_MIN * ((f && f.standOn) ? STAND_HOLD_MUL : 1);
 const TRAP_STEP = 0.3;         
 const TRAP_FINE = 0.06;        
 const TRAP_PROBE = 0.1;        
@@ -10544,6 +10566,7 @@ function tryReflectShot(f, pr) {
   if (dot < BLOCK_DOT) return false;
   f.blockCount++;
   if (f.def.id !== 'kagemitsu') f.gainSp(BLOCK_SP_GAIN);   /* ★v211 #434: 撃ち返しでも同様 */
+  else f.spRegenDelay = Math.max(f.spRegenDelay, 3.0);      /* ★v213 #439: 回復も3秒止める */
   f.ghostActiveT = Math.max(f.ghostActiveT, 1.2);
   pr.vel.x = -pr.vel.x; pr.vel.y = -pr.vel.y; pr.vel.z = -pr.vel.z;
   pr.owner = f;                     
@@ -13558,11 +13581,18 @@ function netDrainError(dt) {
     /* ★v208: ズレが育つほど返しも速くする(1.2m超えから比例で加速)。
        これで通常移動でも3mの線に届く前に必ず追い越して返しきる。 */
     const grow = Math.max(0, (net.fixErr || 0) - 1.2) * 5;
-    const rate = (net.fastFixT && nowD < net.fastFixT) ? 12 : (busy ? 6 + grow : 1.5 + grow);
-    const ch = Math.hypot(cx, cz), cap = rate * dt;
-    if (ch > cap && ch > 0) { const sc = cap / ch; cx *= sc; cz *= sc; }
-    const capY = (rate / 1.5) * dt;
-    if (Math.abs(cy) > capY) cy = Math.sign(cy) * capY;
+    /* ★v213 #440: 【被弾直後は一撃で全量適用】。以前は12m/sで0.5秒引きずっていた=
+       走行と逆向きだと「巻き戻される」体感そのもの(利用者「巻き戻しがなくなればかなり良くなる」)。
+       吹き飛ばしを1コマで映せば「殴られてズレた」ではなく「殴られて飛んだ」に見える。 */
+    if (net.fastFixT && nowD < net.fastFixT) {
+      cx = f.x; cy = f.y; cz = f.z;
+    } else {
+      const rate = busy ? 6 + grow : 1.5 + grow;
+      const ch = Math.hypot(cx, cz), cap = rate * dt;
+      if (ch > cap && ch > 0) { const sc = cap / ch; cx *= sc; cz *= sc; }
+      const capY = (rate / 1.5) * dt;
+      if (Math.abs(cy) > capY) cy = Math.sign(cy) * capY;
+    }
   }
   p.pos.x += cx; p.pos.z += cz; p.y += cy;
   /* ★v206 #421: 少しずつ返す方も同じ —— 動かしたぶんは控えにも足す(二重取り防止) */
@@ -14981,7 +15011,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v212';
+const GAME_VERSION = 'v213';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
