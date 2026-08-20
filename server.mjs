@@ -757,24 +757,45 @@ attachWs(server, {
         const nowA = Date.now();
         const dtA = Math.min(0.25, Math.max(0.008, (nowA - (c._accT || nowA - 33)) / 1000));
         c._accT = nowA;
+        const pxA = fin(m.px, -600, 600), pyA = fin(m.py, -50, 400), pzA = fin(m.pz, -600, 600);
+        /* ★v224 #458: 手元【自身】の1歩の大きさ(前回の報告との差)。検問の合否に関係なく記録する */
+        const stepH = c._lpx === undefined ? 0 : Math.hypot(pxA - c._lpx, pzA - c._lpz);
+        const stepV = c._lpy === undefined ? 0 : Math.abs(pyA - c._lpy);
+        c._lpx = pxA; c._lpy = pyA; c._lpz = pzA;
         if (fp2 && fp2.alive && modA
             && !(fp2.knock && fp2.knock.lengthSq && fp2.knock.lengthSq() > 0.04)
             && !(fp2.stunT > 0.05)
             && !modA.world.btdCut && !modA.world.btdRewind) {
-          const pxA = fin(m.px, -600, 600), pyA = fin(m.py, -50, 400), pzA = fin(m.pz, -600, 600);
           const ddx = pxA - fp2.pos.x, ddy = pyA - fp2.y, ddz = pzA - fp2.pos.z;
           const dh = Math.hypot(ddx, ddz);
           const busyA = fp2.blinkT >= 0 || fp2.vaultT >= 0 || fp2.dashT > 0 || fp2.ropeT >= 0
             || fp2.diveT > 0 || fp2.climbT > 0 || !fp2.grounded || fp2.astral;
-          const capH = (busyA ? 30 : 14) * dtA + 1.2;
-          const capV = (busyA ? 30 : 12) * dtA + 1.2;
-          if (dh <= capH && Math.abs(ddy) <= capV
-              && Math.hypot(pxA, pzA) <= modA.WORLD_R + 1
-              && modA.spotFree(pxA, pzA, pyA, 0.45)) {
+          /* ★v224 #458: 技中の上限30→40m/s(糸ジップ・まばたき等)。 */
+          const capH = (busyA ? 40 : 14) * dtA + 1.2;
+          const capV = (busyA ? 40 : 12) * dtA + 1.2;
+          /* ★v224 #458: 壁の中チェックは【中心点だけ】(半径0.05)。
+             v223の半径0.45は、糸ジップ・壁登り・乗り越えの「壁すれすれの正しい位置」まで
+             弾いていた(利用者「糸で移動したら元の場所に戻された」)。
+             板のド真ん中に立つ壁ハックはこれでも弾ける。 */
+          const okSpot = modA.spotFree(pxA, pzA, pyA, 0.05)
+            && Math.hypot(pxA, pzA) <= modA.WORLD_R + 1;
+          if (dh <= capH && Math.abs(ddy) <= capV && okSpot) {
             fp2.pos.x = pxA; fp2.pos.z = pzA; fp2.y = pyA;
+            c._rejN = 0;
+          } else if (okSpot && stepH <= capH && stepV <= capV) {
+            /* ★★v224 #458: 【復帰路】。v223は一度弾くと、速い移動中は審判との距離が
+               開く一方で二度と受理できず、審判が出発点に置き去り→ドカンで引き戻していた。
+               手元の1歩1歩は妥当(=テレポートしていない)なのに審判とだけ食い違っている時は、
+               10報(約0.2〜0.3秒)続いたら手元に追随し直す。
+               本物のワープチートは1歩目が非妥当(step超過)なので、この道は通れない。 */
+            c._rejN = (c._rejN | 0) + 1;
+            if (c._rejN >= 10) {
+              fp2.pos.x = pxA; fp2.pos.z = pzA; fp2.y = pyA;
+              c._rejN = 0;
+            }
+          } else {
+            c._rejN = 0;   /* 壁の中・ワープ級の1歩 = 問答無用で据え置き */
           }
-          /* 検問落ち = 据え置き。審判の位置が正のままなので、手元は従来の合わせで戻される
-             (ワープチート・壁抜けチートはここで殺される) */
         }
       }
     } else if (m.t === 'gb') {
