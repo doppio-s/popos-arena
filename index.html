@@ -449,6 +449,11 @@ const MOB_N = (typeof globalThis.__MOB_N === 'number'
   : 10;                             
 let MOB_ACTIVE = MOB_N;
 const MOB_HP = 500;
+/* ★★v228 #463: 開幕の静けさ。刺客10体が0秒から狩りを始めると、実測で開幕20〜60秒に
+   Alive 8→3、テストプレイ5連続1分未満死。開幕45秒は刺客が寝ていて、
+   以降5秒間隔で1体ずつ目覚める(45s, 50s, 55s, …)。 */
+const MOB_WAKE_T = 45;
+const MOB_WAKE_STEP = 5;
 const LV_MAX = 6;
 const LV_THRESH = [100, 210, 390, 630, 930, 1290];
 const ORB_ENERGY = 22;
@@ -12450,7 +12455,14 @@ function applyNetInput(bot, dt) {
 }
 function updateAI(bot, dt) {
   if (!bot.alive) return;
-  if (bot.netInput) { applyNetInput(bot, dt); return; }   
+  if (bot.netInput) { applyNetInput(bot, dt); return; }
+  /* ★v228 #463: 眠っている刺客は動かない・殴らない(起きるのは45秒+番号×5秒から)。
+     立っているだけなので、先に殴りに行けば経験値の先取りはできる(リスクと報酬)。 */
+  if (bot.isMob && world.matchT < MOB_WAKE_T + (bot.mobIdx || 0) * MOB_WAKE_STEP) {
+    bot.moveDir.set(0, 0, 0);
+    bot.attackHeld = false;
+    return;
+  }
   if (canAstralChar(bot.def.id) && updateAstralAI(bot, dt)) return;
   const ai = bot.ai;
   ai.thinkT -= dt;
@@ -14454,6 +14466,7 @@ function startBattle(charId, mapId, seed) {
     const mobId = (typeof rawMob === 'string' && CHAR_DEFS[rawMob]) ? rawMob : CHAR_ORDER[0];
     const mob = new Fighter(mobId, { isPlayer: false, name: '流しの刺客' });
     mob.isMob = true;
+    mob.mobIdx = i;   /* ★v228 #463: 目覚めの順番 */
     mob.maxHp = MOB_HP; mob.hp = MOB_HP;
     mob.shield = 0; mob.maxShield = 0;
     world.fighters.push(mob);
@@ -15252,7 +15265,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v227';
+const GAME_VERSION = 'v228';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
