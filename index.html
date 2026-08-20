@@ -13487,14 +13487,22 @@ function snapshotBytes(s) { return JSON.stringify(s || snapshotWorld()).length; 
    2回ぶん + 余白 まで遅らせると、到着の揺れを吸収できる。 */
 /* ★v208 #425: 敵の表示遅らせを115→85msへ。戦闘の「今」との差を30ms縮める。
    写しの棚(v199)と速度調整・45ms先読みがあるので、多少の到着揺れは吸える。 */
-const NET_LERP_MS = 85;        
+/* ★★v221 #454: 85msへ詰めたのは【Render時代の判断】— 利用者の指摘
+   「Renderの時に変えちゃったの、なおしてみるのはどうかな?」が正しかった。
+   ConoHaでの実測は写しの間隔9割65ms・最大128ms。85msの棚では、写しが1回
+   遅れるたびに補間が枯れて先読み→着弾時にビクッと跳ぶ =「キャラが急にテレポート」。
+   115msに戻すと最大級の遅れ(128ms)もほぼ棚の中に収まる。見た目の遅れ+30msは
+   人の目にはまず分からない。 */
+const NET_LERP_MS = 115;
 /* ★★v198: 写しが遅れて届いた時、補間が終端に張り付くと【その場で止まる】。
    ★次が届いた瞬間にまとめて進むので、止まる→飛ぶ の繰り返し = カクつきになる。
      v197で自分の位置を写しだけで描くようにしたぶん、この影響が直に出る。
    ★足りない時間は、直前の速度で少しだけ先を見て埋める。
      ★★v200: 0.09秒は長すぎた。時計を拍に置き換えた(v199)ぶん待ちはほぼ無くなり、
        残るのは「止まったのに滑る」側の害だけになったので半分に詰めた。 */
-const NET_EXTRAP_MS = 45;      
+/* ★v221 #454: 先読みも45→30msへ。棚を厚くしたぶん先読みの出番は減り、
+   先読みが長いほど「進みすぎ→戻す」の小ワープが増える。 */
+const NET_EXTRAP_MS = 30;
 /* 写し1枚ぶんのサーバー時間。server.mjs の SNAP_HZ=20 と対。 */
 const NET_BEAT_MS = 50;        
 /* ★v208 #425: 入力の送りを30→60回/秒。押してから審判に届くまでの刻みが半分になる。
@@ -15156,7 +15164,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v220';
+const GAME_VERSION = 'v221';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
