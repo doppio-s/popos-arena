@@ -819,7 +819,17 @@ attachWs(server, {
              v223の半径0.45は、糸ジップ・壁登り・乗り越えの「壁すれすれの正しい位置」まで
              弾いていた(利用者「糸で移動したら元の場所に戻された」)。
              板のド真ん中に立つ壁ハックはこれでも弾ける。 */
-          const okSpot = modA.spotFree(pxA, pzA, pyA, 0.05)
+          /* ★★★v235 #471: 検問に【手元と同じ足場の規則】を教える。
+             実地スキャン(_stair235)の結果: 立てる点の1.50%(skyline)で、手元は
+             「段の上に立っている」のに spotFree は「壁の中」と答えていた。
+             理由は許容幅の非対称 —— 足場判定 groundHeightAt は箱の外側+0.3mまで
+             「乗っている」と認めるのに、検問は+0.05mしか認めない。
+             薄い壁にぴったり付いた階段(利用者の言う「茶色の台」)の縁がまさにこれで、
+             そこに立っている間ずっと食い違い続ける = 引っ掛かり・当たらないの温床。
+             ★そこに【立てる面】があるなら、壁のAABBと重なっていても居場所として認める。
+               速さの検問(ワープ級の棄却)は一切緩めないので、チート耐性は不変。 */
+          const okSpot = (modA.spotFree(pxA, pzA, pyA, 0.05)
+              || (typeof modA.standOkAt === 'function' && modA.standOkAt(pxA, pzA, pyA)))
             && Math.hypot(pxA, pzA) <= modA.WORLD_R + 1;
           if (dh <= capH && Math.abs(ddy) <= capV && okSpot) {
             fp2.pos.x = pxA; fp2.pos.z = pzA; fp2.y = pyA;

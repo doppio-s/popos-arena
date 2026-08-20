@@ -4534,6 +4534,25 @@ function pickEscapeDir(x, z, y, goalA, avoidA) {
   }
   return bestA;
 }
+/* ★★★v235 #471: 【検問の偽陽性つぶし】。利用者「大体この茶色の台で問題が起きる」——
+   実地スキャンで裏が取れた: 立てる点の1.50%(skyline)で、手元は「段の上に立っている」のに
+   審判の spotFree は「壁の中」と答える。原因は margin の非対称:
+     ・足場判定 groundHeightAt は箱の外側【+0.3m】まで「乗っている」と認める
+     ・審判の検問 spotFree(...,0.05) は【+0.05m】しか認めない
+   つまり薄い壁にぴったり付いた段(実例: 奥行0.2mの壁 高0〜2.5 に接する y=0.42 の階段)の
+   縁に立つと、手元と審判の言い分が【その場所に居る限りずっと】食い違う。
+   v230の二段復帰が0.4秒で強制追随して治すが、その0.4秒が引っ掛かり・当たらないの正体。
+   ★直し方: 検問に「手元と同じ足場の規則」を教える。そこに立てる面があるなら、
+     壁のAABBと重なっていても【立っている】と認める。
+     ワープ検問(速度上限)は一切緩めないので、チート耐性は変わらない。 */
+const STAND_OK_TOL = 0.06;
+function standOkAt(x, z, y) {
+  if (!Number.isFinite(x) || !Number.isFinite(z) || !Number.isFinite(y)) return false;
+  if (y < -0.5) return false;
+  /* 足元をわずかに上から見下ろして、その高さの面に乗っているかを見る */
+  const g = groundHeightAt(x, z, y + STAND_OK_TOL, 0.45);
+  return Math.abs(g - y) <= STAND_OK_TOL;
+}
 function groundHeightAt(x, z, y, step = 0.45) {
   let g = 0;
   const boxes = nearBoxes(x, z, _nbGround);
@@ -15353,7 +15372,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v234';
+const GAME_VERSION = 'v235';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
