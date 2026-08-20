@@ -7029,6 +7029,17 @@ class Fighter {
     this.ghostActiveT = Math.max(this.ghostActiveT, 3);
     if (holdSkill) {
       if (!this.canSpend(skillCost)) { this.skillCd = 0.3; if (this.isPlayer) spWarn(); return false; }
+      /* ★★★v229 #464: gouの空間喰いは【溜めを開始】する(0.7秒後に自動発動)。
+         いままでここで即発動(instant)しており、v213で作った0.7秒の溜め時間も
+         構えのポーズも、実際の入力経路からは一度も使われていなかった
+         (利用者に3回「変わってない」と言われた本当の理由)。kaenは従来どおり即発動。 */
+      if (id === 'gou') {
+        if (this.trapHoldT > 0) return false;
+        this.trapHoldT = 1e-6;
+        this.skillCd = 0;
+        if (this.isPlayer) sfx.plant ? sfx.plant() : null;
+        return true;
+      }
       if (this.isPlayer) sfx.plant ? sfx.plant() : null;
       return releaseTrapHold(this, true);
     }
@@ -7454,10 +7465,13 @@ class Fighter {
     if (this.trapHoldT > 0) {
       this.trapHoldT += dt;
       /* ★v227 #462: 観客の画面の【絵だけの溜め】は発動させない。
-         審判側の人間の席(netInputあり・netRemote()=false)は従来どおり0.7秒で自動発動。 */
-      if (!this.isPlayer && !(this.netInput && typeof netRemote === 'function' && netRemote())
+         ★v229 #464: gouの空間喰いは【誰でも】溜めが満ちたら自動発動
+           (自分で操作している時も0.7秒溜めてから炸裂する)。他の溜め持ちは従来どおり
+           AI/審判の席だけ自動、プレイヤーはボタン離しで発動。 */
+      const _visOnly = this.netInput && typeof netRemote === 'function' && netRemote();
+      if (!_visOnly && (this.def.id === 'gou' || !this.isPlayer)
           && this.trapHoldT >= trapHoldMinOf(this)) {
-        releaseTrapHold(this);          
+        releaseTrapHold(this);
       } else if (this.isPlayer && Math.random() < dt * 26) {
         spawnBurst(this.pos.clone().add(new THREE.Vector3(0, 1.15, 0)),
           0xff7ab0, { n: 1, speed: 0.8, life: 0.3, size: 0.06, up: 0.6 });
@@ -12445,7 +12459,7 @@ function applyNetInput(bot, dt) {
   if (n.dash) { const ok = bot.tryDash(); n.dash = false; if (act) act(bot, 'ダッシュ', ok); }
   if (n.vault) { const ok = bot.startVault(findVaultWindow(bot)); n.vault = false; if (act) act(bot, '窓抜け', ok); }
   if (!n.skillHeld && bot.blockHold) bot.endBlock();
-  if (!n.skillHeld && bot.trapHoldT > 0) releaseTrapHold(bot);
+  if (!n.skillHeld && bot.trapHoldT > 0 && bot.def.id !== 'gou') releaseTrapHold(bot);   /* ★v229 #464 */
   if (bot.groundAim && bot.attackHeld) fireGroundRush(bot);
   if (bot.def.id === 'ryuji') {
     if (n.climb && bot.climbT <= 0 && canWallClimb(bot)) startWallClimb(bot);
@@ -12758,7 +12772,8 @@ function updatePlayer(dt) {
   if (world.wantScan) { world.wantScan = false; p.tryScan(world.fighters); }   
   if (world.wantSkill) { world.wantSkill = false; p.trySkill(world.fighters); }
   if (!world.skillHeld && p.blockHold) p.endBlock();
-  if (!world.skillHeld && p.trapHoldT > 0) releaseTrapHold(p);
+  /* ★v229 #464: gouの溜めはボタンを離しても続く(0.7秒で必ず炸裂)。タップでも溜め→発動になる */
+  if (!world.skillHeld && p.trapHoldT > 0 && p.def.id !== 'gou') releaseTrapHold(p);
   if (world.wantUlt && crimsonOwner(p)) { world.wantUlt = false; endCrimson(p, false); announce('世界を戻した'); }
   if (world.wantUlt) { world.wantUlt = false; p.tryUlt(world.fighters); }
   if (world.wantDash) { world.wantDash = false; p.tryDash(); }
@@ -15265,7 +15280,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v228';
+const GAME_VERSION = 'v229';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
