@@ -12087,8 +12087,11 @@ function updateProjectiles(dt) {
     }
   }
 }
-const LAG_HIST_T = 0.45;        
-const LAG_MAX = 0.25;           
+const LAG_HIST_T = 0.45;
+/* ★v232 #468: 0.25→0.30。夜の回線の実測(往復130ms/2 + 実測棚200ms = 0.265s)が
+   蓋からはみ出て補償しきれていた。物陰に入った直後に撃たれる不利は+50msぶんだけ増えるが、
+   近接が主体のこのゲームでは「見えた敵に当たる」方がずっと大事。 */
+const LAG_MAX = 0.30;
 function lagOf(f) {
   const n = f && f.netInput;
   return n ? clamp(n.lag || 0, 0, LAG_MAX) : 0;
@@ -13742,6 +13745,20 @@ function netMeasureError(snap) {
     if (!svAuth) {
       if (!net._bigT0) net._bigT0 = performance.now();
       if (performance.now() - net._bigT0 < 1400) { net.fix = null; net.fixErr = eh; return; }
+    } else if (eh < 10 && Math.abs(ey) < 10) {
+      /* ★★v232 #467: 吹き飛ばされ中の大ズレは【全速の追従】で従う(テレポートしない)。
+         実記録 13:35:07 skyline (-47.3,10.9,67.2) eh=5.7 ey=-2.3: 縁ぎわで殴られ、
+         審判の中の自分だけ足場から落ちた(ey<0) → 手元は即ドカンで空中へ引ったくられ
+         =「すごい引っ掛かり」。その間、皆の攻撃は落ちた方の体で判定される=ダメージも変。
+         従う義務は変えない(吹き飛ばしは審判が正・縁テック防止)。従い【方】だけを
+         「瞬間移動」から「1コマ最大2.4mの引かれ(下のnetDrainErrorの上限)」に変える ——
+         5.7mでも3コマ(0.05〜0.1s)で追いつき、見た目は«吹っ飛んだ»のまま。
+         10m超だけは本物の転送とみなして従来どおり一瞬で合わせる。 */
+      const f2 = net.fix || (net.fix = { x: 0, y: 0, z: 0 });
+      f2.x = ex; f2.y = ey; f2.z = ez;
+      net.fixErr = eh;
+      net._bigT0 = 0;
+      return;
     }
     net._bigT0 = 0;
     if (typeof netBugReport === 'function') netBugReport('hardsnap', `eh=${eh.toFixed(1)} ey=${ey.toFixed(1)}`);
@@ -13818,6 +13835,11 @@ function netDrainError(dt) {
       if (Math.abs(cy) > capY) cy = Math.sign(cy) * capY;
     }
   }
+  /* ★v232 #467: どの経路でも1コマの補正移動は2.4mまで(体ひとつ分)。
+     「瞬間移動に見えない」上限のまま、5.7m級の吹き飛ばしズレも3コマで追いつく。
+     被弾直後の全量適用(#440)も、2.4m以下の普段のノックバックでは今まで通り1コマ。 */
+  const _mv = Math.hypot(cx, cy, cz);
+  if (_mv > 2.4) { const _s = 2.4 / _mv; cx *= _s; cy *= _s; cz *= _s; }
   const px0 = p.pos.x, py0 = p.y, pz0 = p.pos.z;
   p.pos.x += cx; p.pos.z += cz; p.y += cy;
   /* ★★v216 #449: 補正で【壁の中へ入らない】。少しずつ返す動きは衝突を見ていなかったので、
@@ -13963,7 +13985,19 @@ function netOnMessage(m) {
   } else if (m.t === 'snap') {
     if (net.localSim) return;
     net.a = net.b; net.aT = net.bT;
+    const _prevBT = net.bT;
     net.b = m; net.bT = performance.now();
+    /* ★★v232 #467b: 補間の棚(115ms)を【実測の届き間隔】に合わせて自動で厚くする。
+       v221の実測は昼: 9割65ms・最大128ms → 115msで収まる。だが夜の回線(実測ping
+       86〜136ms)は届きの波も大きく、棚を超えた瞬間に補間が枯れて先読み→着弾でビクッ
+       =「NPC・敵が急にワープする」が夜だけ再発する。
+       届き間隔のピークを保持(10秒半減で忘れる)し、棚 = ピーク+25ms(115〜200ms)。
+       綺麗な回線では今まで通り115msのまま。 */
+    if (_prevBT) {
+      const _gap = net.bT - _prevBT;
+      if (_gap > 0 && _gap < 1000) net._gapPk = Math.max(_gap, (net._gapPk || 65) * 0.9966);
+      net._lerpMs = Math.min(200, Math.max(NET_LERP_MS, (net._gapPk || 65) + 25));
+    }
     diagOnSnap(net.bT);
     if (!net.a) { net.a = m; net.aT = net.bT - 1000 / NET_TICK_HZ; net.clock = net.aT; }
     /* ★★v199: 届いた写しを【サーバーの拍】に並べて棚に積む。
@@ -13999,7 +14033,12 @@ function netOnMessage(m) {
     /* ★v201: 審判が断った理由。これが無いと技は黙って不発になる。 */
     if (typeof m.m === 'string' && m.m) announce(m.m.slice(0, 40));
   } else if (m.t === 'png') {
-    if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k }));
+    /* ★v232 #468: 心拍の返事に【手元の実測補間棚】を同乗させる。審判のラグ補償
+       (撃った側優先の巻き戻し量)は今まで固定115ms前提だった —— 夜の回線で棚が
+       160ms超に伸びると毎振り40〜80msぶん補償が足りず、「画面と判定が若干ずれる」。
+       実測値を申告すれば、審判は【その人が実際に見ていた過去】まで正確に巻き戻せる。 */
+    if (net.ws && net.ws.readyState === 1) net.ws.send(JSON.stringify({ t: 'pog', k: m.k,
+      sh: Math.round(net._lerpMs || NET_LERP_MS) }));
     net.ping = m.rtt || 0;
     const badge = $('netBadge');
     if (badge && net.on) {
@@ -14047,6 +14086,7 @@ function netStart(m) {
   net._cutDoneT = 0;   /* ★v220 #453 */
   net._vgOk = true;   /* ★v222 #456c: 縦ズレの一呼吸 */
   net._bigT0 = 0;     /* ★v231 #466: 大ズレ我慢比べの計時 */
+  net._gapPk = 65; net._lerpMs = NET_LERP_MS;   /* ★v232 #467b: 棚の実測連動 */
   net.ev = [];   
   net.dmgPrev = [];                 
   net.dash = net.vault = false;
@@ -14182,7 +14222,7 @@ function netApplySnapshots(dt) {
   /* ★★v199: 再生はサーバーの拍の上を、実時間で等速に進む。
      ★遅れ具合は【位置を飛ばして】ではなく【進む速さのごく僅かな加減】で直す。
        飛ばして合わせると、そこで必ず一度カクつく —— それを避けるのが目的。 */
-  const want = net.bBeat - NET_LERP_MS;         // 目標: 最新の拍より一定だけ後ろ
+  const want = net.bBeat - (net._lerpMs || NET_LERP_MS);   // 目標: 最新の拍より一定だけ後ろ(★v232: 棚は実測連動)
   if (net.play === undefined || Math.abs(want - net.play) > 600) net.play = want;
   const rate = clamp(1 + (want - net.play) / 500, 0.9, 1.1);
   net.play += dt * 1000 * rate;
@@ -15316,7 +15356,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v231';
+const GAME_VERSION = 'v232';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      

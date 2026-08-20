@@ -129,7 +129,11 @@ const PING_HZ = 2;             // ★v117 #280: 往復の時間を測る回数(�
      合わせてこれだけ過去を見ている。 */
 function applyLag(m, rttMs, mod) {
   const half = rttMs / 2000;
-  const lerp = (mod && mod.NET_LERP_MS ? mod.NET_LERP_MS : 60) / 1000;
+  /* ★v232 #468: 補間棚は固定値でなく【本人の実測申告】(pogのsh、60〜250msに刻み済み)を
+     優先する。夜の回線は棚が115→160ms超に自動で伸びる(手元#467b) —— 固定前提のままだと
+     ラグ補償が毎振り40〜80ms足りず「画面と判定がずれる」。 */
+  const lerp = (Number.isFinite(m.shelfMs) ? m.shelfMs
+    : (mod && mod.NET_LERP_MS ? mod.NET_LERP_MS : 60)) / 1000;
   /* 1回の跳ねで大きく動かない(平均に寄せる)。回線は常に少し揺れている */
   m.rtt = m.rtt ? m.rtt * 0.7 + rttMs * 0.3 : rttMs;
   const lag = Math.min(mod && mod.LAG_MAX ? mod.LAG_MAX : 0.25, m.rtt / 2000 + lerp);
@@ -925,6 +929,10 @@ attachWs(server, {
       /* ★v117 #280: 返事が返ってきた。★自分が送った番号(k)の返事だけを見る ——
          見ないと、古い返事や作った返事で遅れをいくらでも盛れる。 */
       if (c.pingAt && m.k === c.pingK) {
+        /* ★v232 #468: 手元が申告する【実測の補間棚】(sh, ms)。中身は信用しすぎない:
+           60〜250msに刻んでから使う(遅延を盛って巻き戻しを稼ぐ嘘はLAG_MAXの蓋も併せて効く)。 */
+        const sh = +m.sh;
+        if (Number.isFinite(sh)) c.shelfMs = Math.min(250, Math.max(60, sh));
         applyLag(c, Date.now() - c.pingAt, c.room && c.room.mod);
         c.pingAt = 0;
       }
