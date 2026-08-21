@@ -54,6 +54,21 @@ const stats = (() => {
   return o || { since: new Date().toISOString(), loads: 0, conns: 0, joins: 0, starts: 0, days: {} };
 })();
 const today = () => new Date().toISOString().slice(0, 10);
+/* ★v242 #483: 「リンクひらいた人の名前も見せて」への、できる範囲の答え。
+   ★ページを開いただけの人の名前は【技術的に存在しない】——
+     ブラウザは名前を送らないし、送る仕組み自体が無い。
+   ★分かるのは「オンラインで遊ぶときに本人が入力した名前」だけ。
+     入室時にキーボードで打ってもらった物なので、出しても筋が通る。
+   直近 NAMES_KEEP 件だけを名前と時刻で控える(それ以上は古い順に捨てる)。 */
+const NAMES_KEEP = 60;
+if (!Array.isArray(stats.names)) stats.names = [];
+function noteName(name) {
+  const nm = String(name || '').slice(0, 24);
+  if (!nm || nm === '客') return;
+  stats.names.push({ n: nm, t: Date.now() });
+  while (stats.names.length > NAMES_KEEP) stats.names.shift();
+  statsDirty = true;
+}
 let statsDirty = false, statsSaveAt = 0;
 function bump(key, n = 1) {
   stats[key] = (stats[key] || 0) + n;
@@ -711,8 +726,20 @@ const server = http.createServer((req, res) => {
     res.end(txt);
     return;
   }
+  /* ★v242 #483: オフラインで遊び始めた合図。ゲーム本体から1回だけ叩かれる。
+     ★オフラインは「サーバーと喋らない」のが売りだったので、ここは
+       WebSocketではなく【投げっぱなしの fetch 1回】にとどめる。
+       返事も見ないので、失敗しても遊びに一切影響しない。名前は無い(入力欄が無いため)。 */
+  if (url === '/ev') {
+    /* ★ここの url は既に ?以降を落としてある(ハンドラ先頭の split)。
+       種類を見るときは req.url を使うこと —— 最初これで空振りした。 */
+    if (String(req.url || '').includes('k=solo')) bump('solo');
+    res.writeHead(204, { 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
   /* ★v241 #482: 見られた回数を出す軽い画面。スマホからも開ける。 */
-  if (url === '/stats' || url.startsWith('/stats?')) {
+  if (url === '/stats') {
     statsSave(true);
     const d = Object.keys(stats.days).sort().reverse().slice(0, 30);
     const nowLive = clients.size;
@@ -720,7 +747,7 @@ const server = http.createServer((req, res) => {
     const rows = d.map((k) => {
       const r = stats.days[k];
       return `<tr><td>${esc(k)}</td><td>${r.loads || 0}</td><td>${r.conns || 0}</td>`
-        + `<td>${r.joins || 0}</td><td>${r.starts || 0}</td></tr>`;
+        + `<td>${r.joins || 0}</td><td>${r.starts || 0}</td><td>${r.solo || 0}</td></tr>`;
     }).join('');
     const body = `<!doctype html><html lang="ja"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -743,9 +770,19 @@ th:first-child,td:first-child{text-align:left}th{color:#9a9ab0;font-weight:500}
 <div class="card"><b>${stats.loads || 0}</b><span>ページが開かれた</span></div>
 <div class="card"><b>${stats.conns || 0}</b><span>サーバーに繋がれた</span></div>
 <div class="card"><b>${stats.joins || 0}</b><span>入室ボタンを押した</span></div>
-<div class="card"><b>${stats.starts || 0}</b><span>試合が始まった</span></div>
+<div class="card"><b>${stats.starts || 0}</b><span>オンラインの試合</span></div>
+<div class="card"><b>${stats.solo || 0}</b><span>ひとりで遊んだ</span></div>
 </div>
-<table><tr><th>日付</th><th>開かれた</th><th>繋がれた</th><th>入室</th><th>試合</th></tr>${rows}</table>
+${(stats.names && stats.names.length) ? `<h2 style="font-size:15px;margin:22px 0 6px">オンラインで遊んだ人</h2>
+<p style="margin:0 0 10px">入室のときに本人が入力した名前です。新しい順・直近${NAMES_KEEP}件。</p>
+<div style="display:flex;flex-wrap:wrap;gap:6px;max-width:560px">${
+  stats.names.slice().reverse().map((x) => {
+    const ago = Math.max(0, Math.floor((Date.now() - x.t) / 60000));
+    const w = ago < 60 ? `${ago}分前` : ago < 1440 ? `${Math.floor(ago / 60)}時間前` : `${Math.floor(ago / 1440)}日前`;
+    return `<span style="background:#1c1c28;border-radius:8px;padding:5px 10px;font-size:13px">`
+      + `${esc(x.n)} <span style="color:#7a7a90;font-size:11px">${w}</span></span>`;
+  }).join('')}</div>` : '<p style="margin:22px 0 0">まだオンラインで遊んだ人はいません。</p>'}
+<table><tr><th>日付</th><th>開かれた</th><th>繋がれた</th><th>入室</th><th>対戦</th><th>ひとり</th></tr>${rows}</table>
 </body></html>`;
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(body);
@@ -810,6 +847,7 @@ attachWs(server, {
     if (m.t === 'join') {
       if (!c._counted) { c._counted = true; bump('joins'); }   /* ★v241 #482 */
       c.name = cleanName(m.name);
+      if (!c._named) { c._named = true; noteName(c.name); }   /* ★v242 #483 */
       c.char = String(m.char || 'jotaro').slice(0, 24);
       if (!c.room && !waiting.includes(c)) waiting.push(c);
       /* ★★v182 #404: 部屋がもう立てられない時は【その場で空席を探す】。

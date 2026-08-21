@@ -15550,7 +15550,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v240';
+const GAME_VERSION = 'v242';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -15717,6 +15717,17 @@ $('selectStartBtn').addEventListener('click', () => {
   netDisconnect();
   { const b = $('netBadge'); if (b) b.classList.add('hidden'); }
   world.lastNet = false;
+  /* ★v242 #483: ひとりで遊び始めたことだけを、投げっぱなしで1回知らせる。
+     ★オフラインは「サーバーと喋らない」のが売り(v206 #419)なので、
+       WebSocketは張らず、返事も見ない fetch 1回にとどめる。
+       失敗しても catch で握りつぶすので、遊びには一切影響しない。
+     ★送るのは「ひとりで始めた」という事実だけ。名前も端末の情報も送らない。
+     ★localhost や file:// で開いた時は送り先が無いので、同一オリジンにだけ投げる。 */
+  try {
+    if (location.protocol === 'http:' || location.protocol === 'https:') {
+      fetch('ev?k=solo', { method: 'POST', keepalive: true, cache: 'no-store' }).catch(() => {});
+    }
+  } catch (e) {}
   startBattle(selectedChar, chosenMapId() || undefined);
 });
 $('retryBtn').addEventListener('click', () => {
