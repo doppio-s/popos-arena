@@ -449,11 +449,14 @@ const MOB_N = (typeof globalThis.__MOB_N === 'number'
   : 10;                             
 let MOB_ACTIVE = MOB_N;
 const MOB_HP = 500;
-/* ★★v228 #463: 開幕の静けさ。刺客10体が0秒から狩りを始めると、実測で開幕20〜60秒に
-   Alive 8→3、テストプレイ5連続1分未満死。開幕45秒は刺客が寝ていて、
-   以降5秒間隔で1体ずつ目覚める(45s, 50s, 55s, …)。 */
-const MOB_WAKE_T = 45;
-const MOB_WAKE_STEP = 5;
+/* ★★v228 #463 → v238 #476: 開幕の静けさ。刺客10体が0秒から狩りを始めると
+   開幕20〜60秒にAlive 8→3まで落ちたため45秒眠らせていた。
+   ★利用者の注文「アサシンを序盤から動くように」により 45→12秒 / 間隔 5→2.5秒。
+   最初の1体が12秒、最後(10体目)が34.5秒に起きる。開幕の安全は
+   「1体ずつ順に起きる」ほうで担保する(全員同時に襲ってこない)。
+   ★きつすぎたらこの2つの数字だけ戻せばよい。 */
+const MOB_WAKE_T = 18;   /* ★v239: 12秒は出現距離を広げても即死報告が出たため18秒へ */
+const MOB_WAKE_STEP = 2.5;
 const LV_MAX = 6;
 const LV_THRESH = [100, 210, 390, 630, 930, 1290];
 const ORB_ENERGY = 22;
@@ -1825,10 +1828,22 @@ function buildSpawnSpots() {
   const spots = [];
   const base = rand(Math.PI * 2);
   const N = TOTAL_FIGHTERS + MOB_ACTIVE;   
+  /* ★★v239 #480: 人が入る枠を【先に決めてから】配置する。
+     以前は全枠を同じ最低距離で置いてから人用を選り分けていたので、
+     人どうしが22mで隣り合うことがあった(=開幕即殺の温床)。
+     人用の枠だけは人どうし PLAYER_APART 以上を必ず満たすまで粘る。 */
+  const fighterSlotSet = new Set();
+  for (let k = 0; k < TOTAL_FIGHTERS; k++) fighterSlotSet.add(Math.round(k * N / TOTAL_FIGHTERS) % N);
+  const PLAYER_APART = [46, 40, 34, 28];
   for (let i = 0; i < N; i++) {
+    const isP = fighterSlotSet.has(i);
     const slotA = base + (i / N) * Math.PI * 2;
     let placed = null;
-    for (const apart of [20, 16, 14]) {
+    /* ★★v239 #480: 「リスポーン地点が近すぎて開始即殺される」の対策。
+       旧 20/16/14m は、刺客が45秒眠っていた前提の数字だった。
+       v238で刺客を12秒で起こしたため、20m隣に湧いた刺客が即座に届いてしまう。
+       → 最低距離を 34/28/22m へ。街の広さ(半径52〜92mの環)なら18箇所でも取れる。 */
+    for (const apart of [34, 28, 22]) {
       for (let t = 0; t < 40 && !placed; t++) {
         const a = slotA + rand(-0.07, 0.07);
         const r = rand(52, 92);
@@ -1842,21 +1857,41 @@ function buildSpawnSpots() {
         let near = false;
         for (const s of spots) if (Math.hypot(x - s.x, z - s.z) < apart) { near = true; break; }
         if (near) continue;
+        if (isP) {   /* 人どうしの間隔を段階的に緩めながら必ず確保する */
+          const pa = PLAYER_APART[Math.min(PLAYER_APART.length - 1,
+            [34, 28, 22].indexOf(apart) < 0 ? 0 : [34, 28, 22].indexOf(apart))];
+          let nearP = false;
+          for (const s of spots) if (fighterSlotSet.has(s.slot)
+            && Math.hypot(x - s.x, z - s.z) < pa) { nearP = true; break; }
+          if (nearP) continue;
+        }
         placed = { x, z, slot: i };
       }
       if (placed) break;
     }
-    for (let t = 0; t < 80 && !placed; t++) {
-      const p = findOpenSpot(3.2, WORLD_R - 10, 10, true);
-      if (!p) continue;
-      let near = false;
-      for (const s of spots) if (Math.hypot(p.x - s.x, p.z - s.z) < 14) { near = true; break; }
-      if (!near) placed = { x: p.x, z: p.z, slot: i };
+    /* ★v239 #480: 予備枠。ここが【人どうしの間隔を見ていなかった】ため、
+       環の上で置けなかった人枠が22mで隣り合っていた(=即殺の残り火)。
+       人枠は予備でも人どうし34m以上を必ず見る。 */
+    for (const pa of (isP ? [40, 34, 28] : [22])) {
+      for (let t = 0; t < 80 && !placed; t++) {
+        const p = findOpenSpot(3.2, WORLD_R - 10, 10, true);
+        if (!p) continue;
+        let near = false;
+        for (const s of spots) if (Math.hypot(p.x - s.x, p.z - s.z) < 22) { near = true; break; }
+        if (near) continue;
+        if (isP) {
+          let nearP = false;
+          for (const s of spots) if (fighterSlotSet.has(s.slot)
+            && Math.hypot(p.x - s.x, p.z - s.z) < pa) { nearP = true; break; }
+          if (nearP) continue;
+        }
+        placed = { x: p.x, z: p.z, slot: i };
+      }
+      if (placed) break;
     }
     if (placed) spots.push(placed);
   }
-  const fighterSlots = new Set();
-  for (let k = 0; k < TOTAL_FIGHTERS; k++) fighterSlots.add(Math.round(k * N / TOTAL_FIGHTERS) % N);
+  const fighterSlots = fighterSlotSet;
   const forFighters = spots.filter((sp) => fighterSlots.has(sp.slot));
   const forMobs = spots.filter((sp) => !fighterSlots.has(sp.slot));
   forFighters.sort(() => rnd() - 0.5);   
@@ -6286,8 +6321,8 @@ class Fighter {
     this.rollerLand = null;
     this.ai = isPlayer ? null : {
       state: 'farm',
-      thinkT: rand(0.4),
-      aggro: rand(0.4, 0.95),
+      thinkT: rand(0.26),
+      aggro: rand(0.75, 1.35),   /* ★v238 #477: 索敵半径 26*aggro+6 = 16〜31m → 25〜41m */
       target: null,
       wanderA: rand(Math.PI * 2),
       sampleT: 0, stuckT: 0, lastX: 0, lastZ: 0, lastY: 0,
@@ -6682,6 +6717,8 @@ class Fighter {
     if (isRangedChar(this.def.id)) {
       const shotCost = shotCostOf(this.def.id);
       if (!this.canSustain(shotCost)) { this.rushTimer = 0.3; if (this.isPlayer) spWarn(); return; }
+      /* ★v240 #481: 撃っている間はスタンドを必ず出す。 */
+      if (this.level >= 1 && !this.def.noGhost) this.ghostActiveT = Math.max(this.ghostActiveT, 0.8);
       this.rushTimer = shotIntervalOf(this.def.id) / this.rateMult;
       this.spendSp(shotCost);
       /* ★v212 #435: 幽体の弾は【突き出した右腕の拳の先】から出る。
@@ -6712,9 +6749,18 @@ class Fighter {
         }
       }
       const _af = this.astral ? this.astralFacing : this.facing;
-      const muzX = this.astral ? this.astralPos.x + Math.sin(_af) * 1.08 + Math.cos(_af) * 0.52 : this.pos.x;
-      const muzY = this.astral ? this.astralPos.y + 1.90 : this.y + 1.3;
-      const muzZ = this.astral ? this.astralPos.z + Math.cos(_af) * 1.08 - Math.sin(_af) * 0.52 : this.pos.z;
+      /* ★★★v240 #481: 弾はスタンドの拳から出す(利用者報告「腹らへんからでてる」)。
+         幽体(astral)の時だけ拳へ置いていて(v212 #435)、通常時は本体の腹だった。 */
+      const _gm = this.ghostMesh;
+      const _ghostOut = !this.astral && _gm && _gm.visible && this.ghostVis > 0.35
+        && this.level >= 1 && !this.def.noGhost;
+      const _bx = this.astral ? this.astralPos.x : (_ghostOut ? _gm.position.x : this.pos.x);
+      const _by = this.astral ? this.astralPos.y : (_ghostOut ? _gm.position.y : this.y);
+      const _bz = this.astral ? this.astralPos.z : (_ghostOut ? _gm.position.z : this.pos.z);
+      const _arm = (this.astral || _ghostOut) ? 1 : 0;
+      const muzX = _bx + Math.sin(_af) * 1.08 * _arm + Math.cos(_af) * 0.52 * _arm;
+      const muzY = _by + (_arm ? 1.90 : 1.3);
+      const muzZ = _bz + Math.cos(_af) * 1.08 * _arm - Math.sin(_af) * 0.52 * _arm;
       if (dir) {
         const r = fighterAimRay(this, _aimRayA);
         let s = aimRayTravel(r.ox - this.pos.x, r.oz - this.pos.z, r.ux, r.uz, this.effRange());
@@ -6762,6 +6808,11 @@ class Fighter {
           life: this.def.stats.range / spd,
           size: avd ? 0.2 : 0.1,
           color: avd ? 0xff6a2a : 0xffe08a, gem: false, round: avd,
+          /* ★v240 #481: こちらの枝(ダン=銃 / カエン=火の玉)にも銃口を渡す。
+             ここだけ origin を渡していなかったため、カエンの火の玉は
+             スタンドを出していても本体の腹から出ていた。
+             ダンは def.noGhost なので muz は本体側に解決される(設計どおり)。 */
+          origin: new THREE.Vector3(muzX, muzY, muzZ),
           noKnock: !avd,
         });
         continue;
@@ -6773,7 +6824,7 @@ class Fighter {
         life: this.def.stats.range / SHOT_SPEED, size: nara ? 0.11 : 0.13,
         color: nara ? 0xffd76a : 0x2fe86b, gem: !nara,
         /* ★v212 #435: 弾の出現点も銃口(拳の先)に。以前はastralPosそのまま=足元の高さだった */
-        origin: this.astral ? new THREE.Vector3(muzX, muzY, muzZ) : null,
+        origin: new THREE.Vector3(muzX, muzY, muzZ),
         noKnock: true,
       });
       }
@@ -12608,7 +12659,7 @@ function updateAI(bot, dt) {
   ai.thinkT -= dt;
   const distC = zoneDistTo(bot.pos.x, bot.pos.z);   
   if (ai.thinkT <= 0) {
-    ai.thinkT = rand(0.25, 0.5);
+    ai.thinkT = rand(0.16, 0.32);   /* ★v238 #477: 判断間隔を短く(反応を速く) */
     const enemies = world.fighters.filter((f) => f !== bot && f.alive && !hiddenFromFoes(f));
     let nearest = null, nd = 1e9, ns = 1e9;
     for (const e of enemies) {
@@ -12628,7 +12679,10 @@ function updateAI(bot, dt) {
     ai.targetDist = nd;
     if (ai.state !== 'hunt') ai.climb = null;
     const hpRatio = bot.hp / bot.maxHp;
-    const zoneMargin = Math.min(2, world.zone.r * 0.35);
+    /* ★v238 #479: 旧 Math.min(2, r*0.35) は、輪が大きいうちは常に2m。
+       つまり【縁から2m】まで近づかないと中へ戻り始めず、縮小に追い越されて
+       圏外で溶ける個体が出ていた。輪の大きさに応じた余裕を持たせる。 */
+    const zoneMargin = Math.min(12, Math.max(4, world.zone.r * 0.15));
     const zoneEnter = world.zone.r - zoneMargin;
     const zoneExit = zoneEnter - Math.min(4, world.zone.r * 0.25);
     if (distC > (ai.state === 'zone' ? zoneExit : zoneEnter)) {
@@ -12636,7 +12690,7 @@ function updateAI(bot, dt) {
     } else if (hpRatio < 0.3 && nearest && nd < 10) {
       ai.state = 'flee';
     } else if (bot.level === 0) {
-      ai.state = (nearest && nd < 3.5) ? 'hunt' : 'farm'; 
+      ai.state = (nearest && nd < 7) ? 'hunt' : 'farm';   /* ★v238 #477: Lv0でも7mまで詰める(旧3.5m) */
     } else if (nearest && (nd < 26 * ai.aggro + 6)) {
       ai.state = 'hunt';
     } else {
@@ -12803,7 +12857,7 @@ function updateAI(bot, dt) {
         const tooClose = bot.def.id === 'kenya' &&
           world.fighters.some((f) => f !== bot && f.alive && f.pos.distanceTo(bot.pos) < 14);
         const near = world.fighters.filter((f) => f !== bot && f.alive && f.pos.distanceTo(bot.pos) < ultRange).length;
-        if (!tooClose && near >= 1 && Math.random() < dt * 1.4) bot.tryUlt(world.fighters);
+        if (!tooClose && near >= 1 && Math.random() < dt * 2.2) bot.tryUlt(world.fighters);   /* ★v238 #477: 奥義を撃つ頻度を上げる */
         }
       }
     } else if (d < JAB_RANGE + 0.2 && !meleeBlocked(bot, t)) {   
@@ -12821,17 +12875,28 @@ function updateAI(bot, dt) {
   }
   const foeD = (t && t.alive) ? Math.hypot(t.pos.x - bot.pos.x, t.pos.z - bot.pos.z) : 1e9;
   const inFight = bot.attackHeld || foeD < 3.5;
+  /* ★★★v238 #478: ここが「建物に突っかかったまま動かない」の正体だった。
+     脱出は !inFight でしか働かず、noProg も !inFight でしか溜まらない。
+     つまり【壁の向こうに敵がいる】【殴りモーション中】のあいだは、
+     何秒壁を押し続けても永久に迂回しない。安置へ急ぐ最中に敵を見つけると
+     その場で壁に張り付いて、そのまま圏外で溶けていた。
+     → 戦闘中でも「本当に動けていない」なら抜けられるようにする。
+       ただし通常の押し合いを壊さないよう、戦闘中はしきい値を長めに取る。
+     ★安置へ向かっている時(state==='zone')は最優先。命に関わるので即座に迂回する。 */
+  const zoneRun = (ai.state === 'zone');
+  const escGate = zoneRun ? 0.35 : (inFight ? 0.9 : 0.5);   /* 詰まりと認めるまでの秒数 */
   if (wantMove) ai.wantT += dt;
   ai.anchorT += dt;
   if (ai.anchorT >= 1) {
     const net = Math.hypot(bot.pos.x - ai.anchorX, bot.pos.z - ai.anchorZ) + Math.abs(bot.y - ai.anchorY);
-    if (!inFight && ai.wantT > 0.6 && net < 0.9 && bot.stunT <= 0) ai.noProg++;
+    /* 安置へ走っている時は戦闘中でも進捗を見る(旧: !inFight のみ) */
+    if ((!inFight || zoneRun) && ai.wantT > 0.6 && net < 0.9 && bot.stunT <= 0) ai.noProg++;
     else { ai.noProg = 0; if (net >= 0.9) ai.escN = 0; }   
     ai.anchorX = bot.pos.x; ai.anchorZ = bot.pos.z; ai.anchorY = bot.y;
     ai.anchorT = 0; ai.wantT = 0;
   }
   ai.escT -= dt;
-  if (wantMove && !inFight && bot.stunT <= 0 && ai.escT <= 0 && (ai.stuckT > 0.5 || ai.noProg >= 1)) {
+  if (wantMove && bot.stunT <= 0 && ai.escT <= 0 && (ai.stuckT > escGate || ai.noProg >= 1)) {
     const goalA = Math.atan2(mv.x, mv.z);
     ai.escA = pickEscapeDir(bot.pos.x, bot.pos.z, bot.y, goalA, ai.escN > 0 ? ai.escA : null);
     ai.escT = 1.4;              
@@ -15485,7 +15550,7 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v237';
+const GAME_VERSION = 'v240';
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
