@@ -92,24 +92,15 @@ function notePerson(vid, kind, name) {
   }
   statsDirty = true;
 }
-/* ★★★v244 #485: リセットボタン。ただし /stats は誰でも見られるので、
-   **鍵をかけずに置くと誰でも記録を消せる**。かといって鍵を git に置くと
-   リポジトリが公開なので鍵ごと公開されてしまう。SSHも使えない。
-   → 【最初に名乗り出た合言葉を管理者にする】方式にした。
-     公開前の今のうちに本人が1回押せば、以後その端末だけがリセットできる。
-   ★管理者は一度決まったら上書きできない(奪われない)。 */
-function statsClaim(vid) {
-  if (!isVid(vid)) return { ok: false, why: 'bad' };
-  if (stats.owner) return { ok: false, why: 'taken' };
-  stats.owner = vid; statsDirty = true; statsSave(true);
-  return { ok: true };
-}
-function statsReset(vid) {
-  if (!isVid(vid) || !stats.owner || vid !== stats.owner) return false;
-  const owner = stats.owner, since = new Date().toISOString();
+/* ★v244 #485: 記録のリセット。利用者の注文は「ただの記録リセットボタン」。
+   ★鍵は掛けていない —— /stats を知っている人なら誰でも押せる。
+     消えるのは数字だけ(ゲームには影響しない)なので、手軽さを優先した。
+     気になるようになったら鍵を足せばよい。
+   ★誤爆だけは防ぐ: 画面側で「もう一度押す」の2段構えにしてある。 */
+function statsReset() {
   for (const k of ['loads', 'conns', 'joins', 'starts', 'solo']) stats[k] = 0;
   stats.days = {}; stats.names = []; stats.people = {};
-  stats.owner = owner; stats.since = since;
+  stats.since = new Date().toISOString();
   statsDirty = true; statsSave(true);
   return true;
 }
@@ -783,15 +774,10 @@ const server = http.createServer((req, res) => {
      ★オフラインは「サーバーと喋らない」のが売りだったので、ここは
        WebSocketではなく【投げっぱなしの fetch 1回】にとどめる。
        返事も見ないので、失敗しても遊びに一切影響しない。名前は無い(入力欄が無いため)。 */
-  /* ★v244 #485: 管理者まわりの窓口。合言葉は本文でなくクエリで受ける(軽いので)。 */
-  if (url === '/stats/me' || url === '/stats/claim' || url === '/stats/reset') {
-    const vid = (String(req.url || '').match(/[?&]v=([0-9a-f]{16})\b/) || [])[1];
-    let out;
-    if (url === '/stats/me') out = { claimed: !!stats.owner, owner: !!(vid && stats.owner === vid) };
-    else if (url === '/stats/claim') out = statsClaim(vid);
-    else out = { ok: statsReset(vid) };
+  if (url === '/stats/reset') {
+    statsReset();
     res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', 'Cache-Control': 'no-store' });
-    res.end(JSON.stringify(out));
+    res.end(JSON.stringify({ ok: true }));
     return;
   }
   if (url === '/ev') {
@@ -866,48 +852,26 @@ ${(() => {
 数えているのは<b>ブラウザ</b>なので、同じ人のPCとスマホは2人に見えます。閲覧データを消すと別人になります。</p>
 <table style="max-width:640px"><tr><th>名前</th><th>合言葉</th><th>来た</th><th>ひとり</th><th>対戦</th><th>最後</th></tr>${list}</table>`;
 })()}
-<div id="own" style="margin-top:26px"></div>
+<div style="margin-top:28px;padding-top:18px;border-top:1px solid #2a2a3a">
+<button id="rs" style="background:#8a2f3a;color:#fff;border:0;border-radius:8px;
+padding:10px 16px;font-size:14px;cursor:pointer">記録をリセットする</button>
+<span id="rw" style="margin-left:10px;color:#ff9aa8;font-size:13px"></span>
+</div>
 <script>
 (function () {
-  var box = document.getElementById('own');
-  function vid() { try { return localStorage.getItem('gs_vid') || ''; } catch (e) { return ''; } }
-  function say(h) { box.innerHTML = h; }
-  var v = vid();
-  if (!v) { say('<p style="color:#7a7a90">この端末はまだゲームを開いたことがないので、管理はできません。'
-    + '先にゲームを1回開いてください。</p>'); return; }
-  fetch('/stats/me?v=' + v, { cache: 'no-store' }).then(function (r) { return r.json(); }).then(function (m) {
-    if (!m.claimed) {
-      say('<p style="color:#ffd479">まだ管理者が決まっていません。'
-        + '<b>この端末を管理者にする</b>と、以後この端末だけが記録を消せます。<br>'
-        + '<span style="color:#9a9ab0">公開前の今のうちに押しておいてください。先に他人に押されると取り返せません。</span></p>'
-        + '<button id="cl" style="background:#2f6fd0;color:#fff;border:0;border-radius:8px;'
-        + 'padding:10px 16px;font-size:14px;cursor:pointer">この端末を管理者にする</button>');
-      document.getElementById('cl').onclick = function () {
-        fetch('/stats/claim?v=' + v, { method: 'POST' }).then(function (r) { return r.json(); })
-          .then(function (o) { location.reload(); });
-      };
-    } else if (m.owner) {
-      say('<p style="color:#9a9ab0">この端末が管理者です。</p>'
-        + '<button id="rs" style="background:#8a2f3a;color:#fff;border:0;border-radius:8px;'
-        + 'padding:10px 16px;font-size:14px;cursor:pointer">記録をリセットする</button>'
-        + '<span id="rw" style="margin-left:10px;color:#ff9aa8"></span>');
-      var armed = false, t = 0;
-      document.getElementById('rs').onclick = function () {
-        var b = document.getElementById('rs'), w = document.getElementById('rw');
-        if (!armed) {
-          armed = true; b.textContent = '本当に消す(もう一度押す)';
-          w.textContent = '数も名前も来訪履歴も全部消えます。取り消せません。';
-          t = setTimeout(function () { armed = false; b.textContent = '記録をリセットする'; w.textContent = ''; }, 6000);
-          return;
-        }
-        clearTimeout(t);
-        fetch('/stats/reset?v=' + v, { method: 'POST' }).then(function (r) { return r.json(); })
-          .then(function (o) { if (o.ok) location.reload(); else w.textContent = '消せませんでした'; });
-      };
-    } else {
-      say('<p style="color:#7a7a90">管理者は別の端末です。この端末からは消せません。</p>');
+  var b = document.getElementById('rs'), w = document.getElementById('rw'), armed = false, t = 0;
+  b.onclick = function () {
+    if (!armed) {   /* 誤爆よけの2段構え */
+      armed = true; b.textContent = '本当に消す(もう一度押す)';
+      w.textContent = '数も名前も来訪履歴も全部消えます。取り消せません。';
+      t = setTimeout(function () { armed = false; b.textContent = '記録をリセットする'; w.textContent = ''; }, 6000);
+      return;
     }
-  }).catch(function () {});
+    clearTimeout(t); b.disabled = true; b.textContent = '消しています…';
+    fetch('/stats/reset', { method: 'POST' }).then(function (r) { return r.json(); })
+      .then(function () { location.reload(); })
+      .catch(function () { b.disabled = false; b.textContent = '記録をリセットする'; w.textContent = '消せませんでした'; });
+  };
 })();
 </script>
 ${(stats.names && stats.names.length) ? `<h2 style="font-size:15px;margin:22px 0 6px">オンラインで遊んだ人</h2>
