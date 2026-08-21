@@ -39,6 +39,45 @@ await import('./build.mjs');
    審判エンジンは起動時に抽出したまま —— ファイルだけ差し替えると
    「配るHTMLは新しいのに判定は古い」が起きる(v211で実際に起きた)。
    startにこの版数を同梱し、手元と違えば遊ぶ人へ知らせる。 */
+/* ★★★v241 #482: 「このURLが見られたってどうわかるの？」への答え。
+   ページが開かれた回数・繋がれた回数・試合が始まった回数だけを数えて、
+   /stats で見られるようにする。
+   ★個人を特定する物は一切残さない —— IPもUAもクッキーも保存しない。数だけ。
+   ★置き場は既定で /var/tmp/popos_stats.json(リポジトリの外)。
+     git pull で消えない・上書きされないため。STATS_FILE で変えられる。 */
+const STATS_FILE = process.env.STATS_FILE || '/var/tmp/popos_stats.json';
+const STATS_KEEP_DAYS = 60;
+const stats = (() => {
+  let o = null;
+  try { o = JSON.parse(fs.readFileSync(STATS_FILE, 'utf8')); } catch (e) {}
+  if (!o || typeof o !== 'object') o = null;
+  return o || { since: new Date().toISOString(), loads: 0, conns: 0, joins: 0, starts: 0, days: {} };
+})();
+const today = () => new Date().toISOString().slice(0, 10);
+let statsDirty = false, statsSaveAt = 0;
+function bump(key, n = 1) {
+  stats[key] = (stats[key] || 0) + n;
+  const d = today();
+  const row = stats.days[d] || (stats.days[d] = { loads: 0, conns: 0, joins: 0, starts: 0 });
+  row[key] = (row[key] || 0) + n;
+  statsDirty = true;
+}
+function statsSave(force) {
+  if (!statsDirty) return;
+  const now = Date.now();
+  if (!force && now - statsSaveAt < 10000) return;   /* 書きすぎない(10秒に1回まで) */
+  statsSaveAt = now; statsDirty = false;
+  /* 古い日は落とす */
+  const keys = Object.keys(stats.days).sort();
+  while (keys.length > STATS_KEEP_DAYS) delete stats.days[keys.shift()];
+  try { fs.writeFileSync(STATS_FILE, JSON.stringify(stats)); } catch (e) {}
+}
+setInterval(() => statsSave(false), 10000).unref?.();
+for (const sig of ['SIGINT', 'SIGTERM']) {
+  try { process.on(sig, () => { statsSave(true); process.exit(0); }); } catch (e) {}
+}
+try { process.on('exit', () => statsSave(true)); } catch (e) {}
+
 const ENGINE_VER = (() => {
   try { return (fs.readFileSync(path.join(HERE, 'index.html'), 'utf8')
     .match(/GAME_VERSION = '([^']+)'/) || [])[1] || '?'; } catch (e) { return '?'; }
@@ -261,6 +300,7 @@ async function makeRoom(members) {
     for (const f of mod.world.fighters) if (!f.netInput) { f.alive = false; f.hp = 0; }
   }
   rooms.set(id, room);
+  bump('starts');   /* ★v241 #482 */
   console.log(`[部屋] ${id} 開始 — 人${members.filter(Boolean).length}人 / CPU${ROOM_MAX - members.filter(Boolean).length}人 / ${map} / 種${seed}`);
   return room;
 }
@@ -671,8 +711,49 @@ const server = http.createServer((req, res) => {
     res.end(txt);
     return;
   }
+  /* ★v241 #482: 見られた回数を出す軽い画面。スマホからも開ける。 */
+  if (url === '/stats' || url.startsWith('/stats?')) {
+    statsSave(true);
+    const d = Object.keys(stats.days).sort().reverse().slice(0, 30);
+    const nowLive = clients.size;
+    const esc = (x) => String(x).replace(/[&<>]/g, (m) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+    const rows = d.map((k) => {
+      const r = stats.days[k];
+      return `<tr><td>${esc(k)}</td><td>${r.loads || 0}</td><td>${r.conns || 0}</td>`
+        + `<td>${r.joins || 0}</td><td>${r.starts || 0}</td></tr>`;
+    }).join('');
+    const body = `<!doctype html><html lang="ja"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>POPO — 見られた回数</title><style>
+body{font-family:system-ui,-apple-system,'Hiragino Kaku Gothic ProN','Yu Gothic',sans-serif;
+background:#12121a;color:#e8e8f0;margin:0;padding:18px;line-height:1.6}
+h1{font-size:18px;margin:0 0 4px}p{color:#9a9ab0;font-size:13px;margin:0 0 16px}
+.big{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:18px}
+.card{background:#1c1c28;border-radius:10px;padding:12px 16px;min-width:110px}
+.card b{display:block;font-size:26px;color:#7cc4ff}
+.card span{font-size:12px;color:#9a9ab0}
+table{border-collapse:collapse;width:100%;max-width:560px;font-size:14px}
+th,td{padding:6px 10px;text-align:right;border-bottom:1px solid #2a2a3a}
+th:first-child,td:first-child{text-align:left}th{color:#9a9ab0;font-weight:500}
+</style></head><body>
+<h1>POPO'S LAST SURVIVOR — 見られた回数</h1>
+<p>${esc(stats.since.slice(0, 10))} から集計 / いま繋がっている人 <b style="color:#7cc4ff">${nowLive}</b> 人<br>
+個人を特定する情報(IP・端末・クッキー)は一切保存していません。数だけです。</p>
+<div class="big">
+<div class="card"><b>${stats.loads || 0}</b><span>ページが開かれた</span></div>
+<div class="card"><b>${stats.conns || 0}</b><span>サーバーに繋がれた</span></div>
+<div class="card"><b>${stats.joins || 0}</b><span>入室ボタンを押した</span></div>
+<div class="card"><b>${stats.starts || 0}</b><span>試合が始まった</span></div>
+</div>
+<table><tr><th>日付</th><th>開かれた</th><th>繋がれた</th><th>入室</th><th>試合</th></tr>${rows}</table>
+</body></html>`;
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(body);
+    return;
+  }
   const file = url === '/' ? 'index.html' : url.replace(/^\/+/, '');
   if (!PUBLIC_FILES.has(file)) { res.writeHead(404); res.end('not found'); return; }
+  if (file === 'index.html') bump('loads');   /* ★v241 #482: 本体が配られた = 1回見られた */
   const full = path.join(HERE, file);
   fs.readFile(full, (err, data) => {
     if (err) { res.writeHead(404); res.end('not found'); return; }
@@ -712,6 +793,7 @@ attachWs(server, {
     }
     clients.set(sock, { sock, name: '客', char: 'jotaro', room: null, slot: -1, fighter: null,
       rtt: 0, pingK: 0, pingAt: 0, msgN: 0, msgT: Date.now() });
+    bump('conns');   /* ★v241 #482 */
   },
   onText(sock, str) {
     const c = clients.get(sock);
@@ -726,6 +808,7 @@ attachWs(server, {
     let m;
     try { m = JSON.parse(str); } catch (e) { return; }
     if (m.t === 'join') {
+      if (!c._counted) { c._counted = true; bump('joins'); }   /* ★v241 #482 */
       c.name = cleanName(m.name);
       c.char = String(m.char || 'jotaro').slice(0, 24);
       if (!c.room && !waiting.includes(c)) waiting.push(c);
