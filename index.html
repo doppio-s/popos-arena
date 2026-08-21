@@ -14103,7 +14103,7 @@ function netConnect(charId, name) {
   const mine = () => net.ws === ws;
   ws.onopen = () => {
     if (!mine()) { try { ws.close(); } catch (e) {} return; }
-    ws.send(JSON.stringify({ t: 'join', name: net.name, char: net.char }));
+    ws.send(JSON.stringify({ t: 'join', name: net.name, char: net.char, v: visitorId() }));
     netSetStatus('待合室に入りました', '8人そろうか、15秒たてば始まります');
   };
   ws.onmessage = (e) => {
@@ -15550,7 +15550,35 @@ function setLang(l) {
   try { if (typeof localStorage !== 'undefined') localStorage.setItem('gs_lang', LANG); } catch (e) {}
   applyLang();
 }
-const GAME_VERSION = 'v242';
+const GAME_VERSION = 'v243';
+/* ★★★v243 #484: 「同じ人はわかるように」。
+   初回だけ16桁の乱数を作って localStorage に置き、以後それを名乗る。
+   ★この数字は誰の何でもない —— 端末も場所も分からない乱数。
+     分かるのは「前に来たブラウザと同じかどうか」だけ。
+   ★消されたら別人になる(それでよい。追いかけるための物ではない)。 */
+function visitorId() {
+  try {
+    if (typeof localStorage === 'undefined') return '';
+    let v = localStorage.getItem('gs_vid');
+    if (!/^[0-9a-f]{16}$/.test(v || '')) {
+      const b = new Uint8Array(8);
+      if ((globalThis.crypto || {}).getRandomValues) globalThis.crypto.getRandomValues(b);
+      else for (let i = 0; i < b.length; i++) b[i] = Math.floor(Math.random() * 256);
+      v = [...b].map((x) => x.toString(16).padStart(2, '0')).join('');
+      localStorage.setItem('gs_vid', v);
+    }
+    return v;
+  } catch (e) { return ''; }
+}
+function pingEv(kind) {
+  try {
+    if (location.protocol !== 'http:' && location.protocol !== 'https:') return;
+    const v = visitorId();
+    fetch(`ev?k=${kind}${v ? `&v=${v}` : ''}`, { method: 'POST', keepalive: true, cache: 'no-store' })
+      .catch(() => {});
+  } catch (e) {}
+}
+try { pingEv('hi'); } catch (e) {}   /* 開いた合図を1回 */
 const ADS = {
   on: false,                                  
   src: 'https://adm.shinobi.jp/st/t.js',      
@@ -15723,11 +15751,7 @@ $('selectStartBtn').addEventListener('click', () => {
        失敗しても catch で握りつぶすので、遊びには一切影響しない。
      ★送るのは「ひとりで始めた」という事実だけ。名前も端末の情報も送らない。
      ★localhost や file:// で開いた時は送り先が無いので、同一オリジンにだけ投げる。 */
-  try {
-    if (location.protocol === 'http:' || location.protocol === 'https:') {
-      fetch('ev?k=solo', { method: 'POST', keepalive: true, cache: 'no-store' }).catch(() => {});
-    }
-  } catch (e) {}
+  pingEv('solo');
   startBattle(selectedChar, chosenMapId() || undefined);
 });
 $('retryBtn').addEventListener('click', () => {

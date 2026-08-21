@@ -60,6 +60,38 @@ const today = () => new Date().toISOString().slice(0, 10);
    ★分かるのは「オンラインで遊ぶときに本人が入力した名前」だけ。
      入室時にキーボードで打ってもらった物なので、出しても筋が通る。
    直近 NAMES_KEEP 件だけを名前と時刻で控える(それ以上は古い順に捨てる)。 */
+/* ★★★v243 #484: 「同じ人はわかるように」への答え。
+   ★IPは使わない —— IPは【回線】であって人ではない。家族4人が同じ数字になり、
+     Wi-Fi→携帯回線で同じ人が別人になる。しかもIPv4は総当たりできるので
+     ハッシュにしても個人情報を持つのと変わらない。
+   ★代わりに【ブラウザが自分で作った乱数の合言葉】を使う。
+     初回に localStorage へ16桁の乱数を作って置き、以後それを名乗ってもらう。
+     この数字は誰の何でもない —— 出身も場所も端末も分からない。ただ
+     「前に来たブラウザと同じかどうか」だけが分かる。
+   ★数えているのは【人】ではなく【ブラウザ】。同じ人のPCとスマホは2人に見えるし、
+     閲覧データを消せば別人になる。シークレットウィンドウは毎回別人。 */
+const PEOPLE_KEEP = 300;
+const isVid = (v) => typeof v === 'string' && /^[0-9a-f]{16}$/.test(v);
+if (!stats.people || typeof stats.people !== 'object') stats.people = {};
+function notePerson(vid, kind, name) {
+  if (!isVid(vid)) return;
+  const now = Date.now();
+  const p = stats.people[vid] || (stats.people[vid] = { f: now, l: 0, v: 0, s: 0, j: 0, n: [] });
+  p.l = now;
+  if (kind === 'hi') p.v++;
+  if (kind === 'solo') p.s++;
+  if (kind === 'join') {
+    p.j++;
+    const nm = String(name || '').slice(0, 24);
+    if (nm && nm !== '客' && !p.n.includes(nm)) { p.n.push(nm); while (p.n.length > 4) p.n.shift(); }
+  }
+  const ids = Object.keys(stats.people);
+  if (ids.length > PEOPLE_KEEP) {          /* 古い順(最終来訪が古い順)に捨てる */
+    ids.sort((a, b) => (stats.people[a].l || 0) - (stats.people[b].l || 0));
+    while (ids.length > PEOPLE_KEEP) delete stats.people[ids.shift()];
+  }
+  statsDirty = true;
+}
 const NAMES_KEEP = 60;
 if (!Array.isArray(stats.names)) stats.names = [];
 function noteName(name) {
@@ -733,7 +765,10 @@ const server = http.createServer((req, res) => {
   if (url === '/ev') {
     /* ★ここの url は既に ?以降を落としてある(ハンドラ先頭の split)。
        種類を見るときは req.url を使うこと —— 最初これで空振りした。 */
-    if (String(req.url || '').includes('k=solo')) bump('solo');
+    const q = String(req.url || '');
+    const vid = (q.match(/[?&]v=([0-9a-f]{16})\b/) || [])[1];
+    if (q.includes('k=solo')) { bump('solo'); notePerson(vid, 'solo'); }
+    else if (q.includes('k=hi')) { notePerson(vid, 'hi'); }
     res.writeHead(204, { 'Cache-Control': 'no-store' });
     res.end();
     return;
@@ -773,6 +808,32 @@ th:first-child,td:first-child{text-align:left}th{color:#9a9ab0;font-weight:500}
 <div class="card"><b>${stats.starts || 0}</b><span>オンラインの試合</span></div>
 <div class="card"><b>${stats.solo || 0}</b><span>ひとりで遊んだ</span></div>
 </div>
+${(() => {
+  const ppl = Object.entries(stats.people || {});
+  if (!ppl.length) return '<p style="margin:0 0 18px">まだ誰の来訪も記録されていません。</p>';
+  const day = 86400000, now = Date.now();
+  const uniq = ppl.length;
+  const repeat = ppl.filter(([, p]) => (p.v || 0) >= 2).length;
+  const today24 = ppl.filter(([, p]) => now - (p.l || 0) < day).length;
+  const played = ppl.filter(([, p]) => (p.j || 0) + (p.s || 0) > 0).length;
+  const ago = (t) => { const m = Math.max(0, Math.floor((now - t) / 60000));
+    return m < 60 ? `${m}分前` : m < 1440 ? `${Math.floor(m / 60)}時間前` : `${Math.floor(m / 1440)}日前`; };
+  const list = ppl.sort((a, b) => (b[1].l || 0) - (a[1].l || 0)).slice(0, 40).map(([id, p]) => {
+    const nm = (p.n && p.n.length) ? esc(p.n.join(' / ')) : '<span style="color:#7a7a90">名前なし</span>';
+    return `<tr><td>${nm}</td><td style="color:#7a7a90;font-family:ui-monospace,monospace;font-size:11px">${esc(id.slice(0, 6))}</td>`
+      + `<td>${p.v || 0}</td><td>${p.s || 0}</td><td>${p.j || 0}</td><td style="color:#9a9ab0">${ago(p.l || 0)}</td></tr>`;
+  }).join('');
+  return `<div class="big">
+<div class="card"><b>${uniq}</b><span>実際の人数(のべでない)</span></div>
+<div class="card"><b>${repeat}</b><span>2回以上来た人</span></div>
+<div class="card"><b>${today24}</b><span>24時間以内に来た人</span></div>
+<div class="card"><b>${played}</b><span>実際に遊んだ人</span></div>
+</div>
+<h2 style="font-size:15px;margin:22px 0 6px">来た人ごと(新しい順・最大40)</h2>
+<p style="margin:0 0 10px">「合言葉」はブラウザが初回に自分で作った乱数です。個人を指す情報ではありません。<br>
+数えているのは<b>ブラウザ</b>なので、同じ人のPCとスマホは2人に見えます。閲覧データを消すと別人になります。</p>
+<table style="max-width:640px"><tr><th>名前</th><th>合言葉</th><th>来た</th><th>ひとり</th><th>対戦</th><th>最後</th></tr>${list}</table>`;
+})()}
 ${(stats.names && stats.names.length) ? `<h2 style="font-size:15px;margin:22px 0 6px">オンラインで遊んだ人</h2>
 <p style="margin:0 0 10px">入室のときに本人が入力した名前です。新しい順・直近${NAMES_KEEP}件。</p>
 <div style="display:flex;flex-wrap:wrap;gap:6px;max-width:560px">${
@@ -847,7 +908,7 @@ attachWs(server, {
     if (m.t === 'join') {
       if (!c._counted) { c._counted = true; bump('joins'); }   /* ★v241 #482 */
       c.name = cleanName(m.name);
-      if (!c._named) { c._named = true; noteName(c.name); }   /* ★v242 #483 */
+      if (!c._named) { c._named = true; noteName(c.name); notePerson(m.v, 'join', c.name); }   /* ★v242 #483 / v243 #484 */
       c.char = String(m.char || 'jotaro').slice(0, 24);
       if (!c.room && !waiting.includes(c)) waiting.push(c);
       /* ★★v182 #404: 部屋がもう立てられない時は【その場で空席を探す】。
